@@ -3,7 +3,7 @@ import os
 import gzip
 import argparse
 import numpy as np
-from itertools import product, groupby
+from itertools import groupby, product, zip_longest
 
 import pysam
 
@@ -559,28 +559,35 @@ def generate_haplo_reads(read_seq, snp_idx, read_pos, ref_alleles, alt_alleles,
 
     
 
-            
+# Change this function to process indels
+# Need to figure out how to adjust the base quality for indels
+# Determine how indels change mapping location        
 def generate_reads(read_seq, read_pos, ref_alleles, alt_alleles):
     """Generate set of reads with all possible combinations
     of alleles (i.e. 2^n combinations where n is the number of snps overlapping
     the reads)
     """
-    reads = [read_seq]
-    # iterate through all snp locations
-    for i in range(len(read_pos)):
-        idx = read_pos[i]-1
+    # Create set to hold all versions of the read
+    current_reads = set([read_seq])
+    # Create iterable to traverse through variable positions from end to start
+    allele_iter = zip_longest(
+        reversed(read_pos), reversed(ref_alleles), reversed(alt_alleles)
+    )
+    for pos, ref, alt in allele_iter:
+        # Create set to hold new reads
+        new_reads = set()
         # for each read we've already created...
-        for j in range(len(reads)):
-            read = reads[j]
-            # create a new version of this read with both reference
-            # and alternative versions of the allele at this index
-            reads.append(
-              read[:idx] + ref_alleles[i].decode("utf-8") + read[idx+1:]
+        for read in current_reads:
+            # create a new version of read with ref and alt alleles
+            new_reads.add(
+              read[:(pos-1)] + ref.decode('utf-8') + read[pos:]
             )
-            reads.append(
-              read[:idx] + alt_alleles[i].decode("utf-8") + read[idx+1:]
+            new_reads.add(
+              read[:(pos-1)] + alt.decode('utf-8') + read[pos:]
             )
-    return set(reads)
+        # update current reads with new read versions
+        current_reads = current_reads.union(new_reads)
+    return current_reads
 
 
 def write_fastq(fastq_file, orig_read, new_seqs):
