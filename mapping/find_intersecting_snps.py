@@ -561,32 +561,39 @@ def generate_haplo_reads(read_seq, snp_idx, read_pos, ref_alleles, alt_alleles,
 
 # Change this function to process indels
 # Need to figure out how to adjust the base quality for indels
-# Determine how indels change mapping location        
+# Question - should I trim reads back to original size?      
 def generate_reads(read_seq, read_pos, ref_alleles, alt_alleles):
     """Generate set of reads with all possible combinations
     of alleles (i.e. 2^n combinations where n is the number of snps overlapping
     the reads)
     """
-    # Create set to hold all versions of the read
-    current_reads = set([read_seq])
-    # Create iterable to traverse through variable positions from end to start
-    allele_iter = zip_longest(
-        reversed(read_pos), reversed(ref_alleles), reversed(alt_alleles)
-    )
-    for pos, ref, alt in allele_iter:
-        # Create set to hold new reads
-        new_reads = set()
-        # for each read we've already created...
+    # Check read positions are sorted and within the expected range
+    read_len = len(read_seq)
+    assert(sorted(read_pos) == read_pos)
+    assert(min(read_pos) > 0)
+    assert(max(read_pos) <= read_len)
+    # Subtract 1 from read position to adjust for zero based index
+    # Reverse varaiables to enable modification of reads from 3' end
+    read_pos = [x - 1 for x in reversed(read_pos)]
+    ref_alleles = [x.decode('utf-8') for x in reversed(ref_alleles)]
+    alt_alleles = [x.decode('utf-8') for x in reversed(alt_alleles)]    
+    # Create set to hold all current and novel versions of the read
+    current_reads = {read_seq}
+    new_reads = set()
+    # Create iterable to traverse through positions from end to start
+    for pos, ref, alt in zip_longest(read_pos, ref_alleles, alt_alleles):
+        # Create set to hold new reads and for each current read...
         for read in current_reads:
             # create a new version of read with ref and alt alleles
-            new_reads.add(
-              read[:(pos-1)] + ref.decode('utf-8') + read[pos:]
-            )
-            new_reads.add(
-              read[:(pos-1)] + alt.decode('utf-8') + read[pos:]
-            )
+            # new reads are trimmed to original read length
+            read_start = read[:pos] 
+            read_end = read[(pos + len(ref)):]
+            for read_middle in (alt, ref):
+                new_read = (read_start + read_middle + read_end)[:read_len]
+                new_reads.add(new_read)
         # update current reads with new read versions
         current_reads = current_reads.union(new_reads)
+        new_reads = set()
     return current_reads
 
 
