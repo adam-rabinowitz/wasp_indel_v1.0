@@ -557,40 +557,52 @@ def generate_haplo_reads(read_seq, snp_idx, read_pos, ref_alleles, alt_alleles,
 
     return new_read_list
 
-    
 
 # Change this function to process indels
-# Need to figure out how to adjust the base quality for indels
-# Question - should I trim reads back to original size?      
-def generate_reads(read_seq, read_pos, ref_alleles, alt_alleles):
+# Need to figure out how to adjust the base quality for indels     
+def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
     """Generate set of reads with all possible combinations
     of alleles (i.e. 2^n combinations where n is the number of snps overlapping
     the reads)
     """
     # Check read positions are sorted and within the expected range
-    read_len = len(read_seq)
     assert(sorted(read_pos) == read_pos)
     assert(min(read_pos) > 0)
-    assert(max(read_pos) <= read_len)
+    assert(max(read_pos) <= len(read_seq))
     # Subtract 1 from read position to adjust for zero based index
     # Reverse varaiables to enable modification of reads from 3' end
     read_pos = [x - 1 for x in reversed(read_pos)]
     ref_alleles = [x.decode('utf-8') for x in reversed(ref_alleles)]
     alt_alleles = [x.decode('utf-8') for x in reversed(alt_alleles)]    
     # Create set to hold all current and novel versions of the read
-    current_reads = {read_seq}
+    current_reads = {(read_seq, read_qual)}
     new_reads = set()
     # Create iterable to traverse through positions from end to start
     for pos, ref, alt in zip_longest(read_pos, ref_alleles, alt_alleles):
         # Create set to hold new reads and for each current read...
-        for read in current_reads:
-            # create a new version of read with ref and alt alleles
-            # new reads are trimmed to original read length
-            read_start = read[:pos] 
-            read_end = read[(pos + len(ref)):]
-            for read_middle in (alt, ref):
-                new_read = (read_start + read_middle + read_end)[:read_len]
-                new_reads.add(new_read)
+        for sequence, quality in current_reads:
+            # Create slices for start and end
+            assert(len(sequence) == len(quality))
+            start = slice(0, pos, 1)
+            end = slice(pos + len(ref), len(sequence), 1)
+            # Create reference allele sequence and store with same quality
+            ref_sequence = sequence[start] + ref + sequence[end]
+            new_reads.add(ref_sequence, quality)
+            # Create alternative allele sequence
+            alt_sequence = sequence[start] + alt + sequence[end]
+            # Store alternative allele with same quality if reference and 
+            # alternative sequence are same length or...
+            if len(ref_sequence) == len(alt_sequence):
+                new_reads.add(alt_sequence, quality)
+            # Create new alternative sequence quality
+            else:
+                # Calculate mean quality across reference
+                ref_values = [ord(x) for x in quality[pos:(pos + len(ref))]]
+                ref_mean = chr(sum(ref_values) // len(ref_values))
+                # Replace reference quality with mean values for altenative
+                alt_values = ref_mean * len(alt)
+                alt_quality = quality[start] + alt_values + quality[end]
+                new_reads.add(alt_sequence, alt_quality)
         # update current reads with new read versions
         current_reads = current_reads.union(new_reads)
         new_reads = set()
