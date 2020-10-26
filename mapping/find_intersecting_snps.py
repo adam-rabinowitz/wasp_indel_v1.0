@@ -3,7 +3,7 @@ import os
 import gzip
 import argparse
 import numpy as np
-from itertools import groupby, product, zip_longest
+from itertools import groupby, product
 
 import pysam
 
@@ -558,6 +558,29 @@ def generate_haplo_reads(read_seq, snp_idx, read_pos, ref_alleles, alt_alleles,
     return new_read_list
 
 
+# Function to check supplied variables
+def check_alleles(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
+    # Check read sequence and read quality are same length
+    assert(len(read_seq) == len(read_qual))
+    # Check positions and alleles are the same length
+    assert(len(read_pos) == len(ref_alleles))
+    assert(len(read_pos) == len(alt_alleles))
+    # Check positions are sorted and within read sequence
+    assert(sorted(read_pos) == read_pos)
+    assert(min(read_pos) > 0)
+    assert(max(read_pos) <= len(read_seq))
+    # Check for overlapping non-identical reference positions
+    ref_ranges = []
+    for pos, ref in zip(read_pos, ref_alleles):
+        ref_range = (pos, pos + len(ref))
+        if ref_ranges:
+            if ref_range[0] < ref_ranges[-1][1]:
+                assert(ref_range == ref_ranges[-1])
+        ref_ranges.append(ref_range)
+    # Check reference alleles do not extend beyond read length
+    assert(ref_ranges[-1][1] <= len(read_seq))
+    
+
 # Change this function to process indels
 # Need to figure out how to adjust the base quality for indels     
 def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
@@ -565,10 +588,6 @@ def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
     of alleles (i.e. 2^n combinations where n is the number of snps overlapping
     the reads)
     """
-    # Check read positions are sorted and within the expected range
-    assert(sorted(read_pos) == read_pos)
-    assert(min(read_pos) > 0)
-    assert(max(read_pos) <= len(read_seq))
     # Subtract 1 from read position to adjust for zero based index
     # Reverse varaiables to enable modification of reads from 3' end
     read_pos = [x - 1 for x in reversed(read_pos)]
@@ -578,23 +597,22 @@ def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
     current_reads = {(read_seq, read_qual)}
     new_reads = set()
     # Create iterable to traverse through positions from end to start
-    for pos, ref, alt in zip_longest(read_pos, ref_alleles, alt_alleles):
+    for pos, ref, alt in zip(read_pos, ref_alleles, alt_alleles):
         # Create set to hold new reads and for each current read...
         for sequence, quality in current_reads:
             # Create slices for start and end
-            assert(len(sequence) == len(quality))
             start = slice(0, pos, 1)
             end = slice(pos + len(ref), len(sequence), 1)
             # Create reference allele sequence and store with same quality
             ref_sequence = sequence[start] + ref + sequence[end]
-            new_reads.add(ref_sequence, quality)
+            new_reads.add((ref_sequence, quality))
             # Create alternative allele sequence
             alt_sequence = sequence[start] + alt + sequence[end]
             # Store alternative allele with same quality if reference and 
-            # alternative sequence are same length or...
+            # alternative sequence are same length...
             if len(ref_sequence) == len(alt_sequence):
-                new_reads.add(alt_sequence, quality)
-            # Create new alternative sequence quality
+                new_reads.add((alt_sequence, quality))
+            # or create new alternative sequence quality
             else:
                 # Calculate mean quality across reference
                 ref_values = [ord(x) for x in quality[pos:(pos + len(ref))]]
@@ -602,7 +620,7 @@ def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
                 # Replace reference quality with mean values for altenative
                 alt_values = ref_mean * len(alt)
                 alt_quality = quality[start] + alt_values + quality[end]
-                new_reads.add(alt_sequence, alt_quality)
+                new_reads.add((alt_sequence, alt_quality))
         # update current reads with new read versions
         current_reads = current_reads.union(new_reads)
         new_reads = set()
