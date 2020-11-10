@@ -558,7 +558,7 @@ def generate_haplo_reads(read_seq, snp_idx, read_pos, ref_alleles, alt_alleles,
     return new_read_list
 
 
-# Function to check supplied variables
+# Function raises assertion error for incorrect alleles
 def check_alleles(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
     # Check read sequence and read quality are same length
     assert(len(read_seq) == len(read_qual))
@@ -572,29 +572,38 @@ def check_alleles(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
     # Check for overlapping non-identical reference positions
     ref_ranges = []
     for pos, ref in zip(read_pos, ref_alleles):
+        # Get range of reference allele
+        pos -= 1
         ref_range = (pos, pos + len(ref))
+        # Check range doesn't partially overlap previous range
         if ref_ranges:
             if ref_range[0] < ref_ranges[-1][1]:
                 assert(ref_range == ref_ranges[-1])
+        # Append range
         ref_ranges.append(ref_range)
     # Check reference alleles do not extend beyond read length
     assert(ref_ranges[-1][1] <= len(read_seq))
-    
+  
 
-# Change this function to process indels
-# Need to figure out how to adjust the base quality for indels     
+# Function generates alternative reads for supplied alleles   
 def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
     """Generate set of reads with all possible combinations
     of alleles (i.e. 2^n combinations where n is the number of snps overlapping
     the reads)
     """
+    # Check supplied alleles
+    check_alleles(
+        read_seq=read_seq, read_qual=read_qual, read_pos=read_pos,
+        ref_alleles=ref_alleles, alt_alleles=alt_alleles
+    )
     # Subtract 1 from read position to adjust for zero based index
     # Reverse varaiables to enable modification of reads from 3' end
     read_pos = [x - 1 for x in reversed(read_pos)]
     ref_alleles = [x.decode('utf-8') for x in reversed(ref_alleles)]
     alt_alleles = [x.decode('utf-8') for x in reversed(alt_alleles)]    
     # Create set to hold all current and novel versions of the read
-    current_reads = {(read_seq, read_qual)}
+    initial_read = (read_seq, read_qual)
+    current_reads = set([initial_read])
     new_reads = set()
     # Create iterable to traverse through positions from end to start
     for pos, ref, alt in zip(read_pos, ref_alleles, alt_alleles):
@@ -624,7 +633,9 @@ def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
         # update current reads with new read versions
         current_reads = current_reads.union(new_reads)
         new_reads = set()
-    return current_reads
+    # Remove initial read and return
+    current_reads.discard(initial_read)
+    return(current_reads)
 
 
 def write_fastq(fastq_file, orig_read, new_seqs):
@@ -881,6 +892,10 @@ def process_paired_read(read1, read2, read_stats, files,
     and writes read pair (or generated read pairs) to appropriate
     output files"""
 
+    print('processing paired read')
+    print(read1)
+    print(read2)
+
     new_reads = []
     pair_snp_idx = []
     pair_snp_read_pos = []
@@ -890,13 +905,14 @@ def process_paired_read(read1, read2, read_stats, files,
         # check if read overlaps SNPs or indels
         snp_idx, snp_read_pos, \
             indel_idx, indel_read_pos = snp_tab.get_overlapping_snps(read)
+        print(snp_idx, snp_read_pos, indel_idx, indel_read_pos)
 
-        if len(indel_idx) > 0:
-            # for now discard this read pair, we want to improve this to handle
-            # the indel reads appropriately
-            read_stats.discard_indel += 2
-            # TODO: add option to handle indels instead of throwing out reads
-            return
+        #if len(indel_idx) > 0:
+        #    # for now discard this read pair, we want to improve this to handle
+        #    # the indel reads appropriately
+        #    read_stats.discard_indel += 2
+        #    # TODO: add option to handle indels instead of throwing out reads
+        #    return
 
         if len(snp_idx) > 0:
             ref_alleles = snp_tab.snp_allele1[snp_idx]
@@ -921,8 +937,14 @@ def process_paired_read(read1, read2, read_stats, files,
                                                  snp_tab.phase)
             else:
                 # generate all possible allelic combinations of reads
-                read_seqs = generate_reads(read.query_sequence, snp_read_pos,
-                                           ref_alleles, alt_alleles)
+                read_seqs = generate_reads(
+                    read_seq=read.query_sequence,
+                    read_qual=read.query_qualities,
+                    read_pos=snp_read_pos,
+                    ref_alleles=ref_alleles,
+                    alt_alleles=alt_alleles
+                )
+
             
             new_reads.append(read_seqs)
             pair_snp_idx.append(snp_idx)
@@ -981,11 +1003,12 @@ def process_paired_read(read1, read2, read_stats, files,
 
     
 
-def process_single_read(read, read_stats, files, snp_tab, max_seqs,
-                        max_snps):
+def process_single_read(
+    read, read_stats, files, snp_tab, max_seqs, max_snps
+):
     """Check if a single read overlaps SNPs or indels, and writes
     this read (or generated read pairs) to appropriate output files"""
-                
+
     # check if read overlaps SNPs or indels
     snp_idx, snp_read_pos, \
         indel_idx, indel_read_pos = snp_tab.get_overlapping_snps(read)
@@ -1018,8 +1041,13 @@ def process_single_read(read, read_stats, files, snp_tab, max_seqs,
                                              snp_tab.haplotypes,
                                              snp_tab.phase)
         else:
-            read_seqs = generate_reads(read.query_sequence,  snp_read_pos,
-                                       ref_alleles, alt_alleles)
+            read_seqs = generate_reads(
+                read_seq=read.query_sequence,
+                read_qual=read.query_qualities,
+                read_pos=snp_read_pos,
+                ref_alleles=ref_alleles,
+                alt_alleles=alt_alleles
+            )
 
         # we don't want the read that matches the original
         read_seqs.discard(read.query_sequence)
