@@ -560,8 +560,6 @@ def generate_haplo_reads(read_seq, snp_idx, read_pos, ref_alleles, alt_alleles,
 
 # Function raises assertion error for incorrect alleles
 def check_alleles(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
-    # Check read sequence and read quality are same length
-    assert(len(read_seq) == len(read_qual))
     # Check positions and alleles are the same length
     assert(len(read_pos) == len(ref_alleles))
     assert(len(read_pos) == len(alt_alleles))
@@ -602,7 +600,7 @@ def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
     ref_alleles = [x.decode('utf-8') for x in reversed(ref_alleles)]
     alt_alleles = [x.decode('utf-8') for x in reversed(alt_alleles)]    
     # Create set to hold all current and novel versions of the read
-    initial_read = (read_seq, read_qual)
+    initial_read = (read_seq, tuple(read_qual))
     current_reads = set([initial_read])
     new_reads = set()
     # Create iterable to traverse through positions from end to start
@@ -624,10 +622,10 @@ def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
             # or create new alternative sequence quality
             else:
                 # Calculate mean quality across reference
-                ref_values = [ord(x) for x in quality[pos:(pos + len(ref))]]
-                ref_mean = chr(sum(ref_values) // len(ref_values))
+                ref_values = quality[pos:(pos + len(ref))]
+                ref_mean = sum(ref_values) // len(ref_values)
                 # Replace reference quality with mean values for altenative
-                alt_values = ref_mean * len(alt)
+                alt_values = (ref_mean,) * len(alt)
                 alt_quality = quality[start] + alt_values + quality[end]
                 new_reads.add((alt_sequence, alt_quality))
         # update current reads with new read versions
@@ -893,9 +891,6 @@ def process_paired_read(read1, read2, read_stats, files,
     output files"""
 
     print('processing paired read')
-    print(read1)
-    print(read2)
-
     new_reads = []
     pair_snp_idx = []
     pair_snp_read_pos = []
@@ -905,7 +900,8 @@ def process_paired_read(read1, read2, read_stats, files,
         # check if read overlaps SNPs or indels
         snp_idx, snp_read_pos, \
             indel_idx, indel_read_pos = snp_tab.get_overlapping_snps(read)
-        print(snp_idx, snp_read_pos, indel_idx, indel_read_pos)
+        print(snp_idx, snp_read_pos)
+        print(indel_idx, indel_read_pos)
 
         #if len(indel_idx) > 0:
         #    # for now discard this read pair, we want to improve this to handle
@@ -914,9 +910,13 @@ def process_paired_read(read1, read2, read_stats, files,
         #    # TODO: add option to handle indels instead of throwing out reads
         #    return
 
-        if len(snp_idx) > 0:
+        comb_idx = snp_idx + indel_idx
+        comb_read_pos = snp_read_pos + indel_read_pos
+
+        if len(comb_idx) > 0:
             ref_alleles = snp_tab.snp_allele1[snp_idx]
             alt_alleles = snp_tab.snp_allele2[snp_idx]
+            print(comb_idx, ref_alleles, alt_alleles, comb_read_pos)
 
             count_ref_alt_matches(read, read_stats, snp_tab, snp_idx,
                                   snp_read_pos)
