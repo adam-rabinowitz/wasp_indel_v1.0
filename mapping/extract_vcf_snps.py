@@ -1,3 +1,4 @@
+import argparse
 import gzip
 import os
 
@@ -26,7 +27,7 @@ def extract_variant(
             previous_chroms.add(current_chrom)
             current_chrom = chrom
             if current_chrom in previous_chroms:
-                raise ValueError('vcf is not sorted')
+                raise ValueError('vcf is not sorted by chromosome')
             # Close previous file and create new one
             if outfile is not None:
                 outfile.close()
@@ -34,18 +35,24 @@ def extract_variant(
             outfile = gzip.open(outpath, 'wt')
         # Check position
         if int(position) < current_position:
-            raise ValueError('vcf is not sorted')
+            raise ValueError('vcf is not sorted by position')
         current_position = int(position)
         # Write variant to output file
         output = '\t'.join([position, ref, alt]) + '\n'
         outfile.write(output)
-    # Close file
+    # Close files
     infile.close()
     if outfile is not None:
         outfile.close()
 
 
-extract_variant(
-    vcf='/Users/rabinowi/vasa_cas9/gatk_variants_default_filters.vcf.gz',
-    outdir='/Users/rabinowi/vasa_cas9/snp_dir'
-)
+if __name__ == "__main__":
+    # Create argument parser
+    parser = argparse.ArgumentParser(
+        description='creates chromosome specific variant files from vcf'
+    )
+    parser.add_argument('vcf', help='path to vcf file')
+    parser.add_argument('outdir', help='path to output directory')
+    args = parser.parse_args()
+    # Extract chromosome specific variants
+    extract_variant(vcf=args.vcf, outdir=args.outdir)
