@@ -4,12 +4,9 @@ import gzip
 import argparse
 import numpy as np
 from itertools import groupby, product
-
 import pysam
-
 import util
 import snptable
-
 import tables
 
 MAX_SEQS_DEFAULT = 64
@@ -21,33 +18,19 @@ class DataFiles(object):
     datafiles"""
     
     def __init__(self, bam_filename, is_sorted, is_paired,
-                 output_dir=None, snp_dir=None,
-                 snp_tab_filename=None, snp_index_filename=None,
-                 haplotype_filename=None, samples=None):
+                 output_dir=None, snp_dir=None):
         # flag indicating whether reads are paired-end
         self.is_paired = is_paired
-        
         # prefix for output files
         self.prefix = None
-
-        # name of input BAM filename
+        # name of sorted input BAM filename
         self.bam_filename = bam_filename        
-        # name of sorted input bam_filename
-        # (new file is created if input file is not
-        #  already sorted)
-        self.bam_sort_filename = None
-        # pysam file handle for input BAM
-        self.input_bam = None
-
         # name of output keep and to.remap BAM files
         self.keep_filename = None
         self.remap_filename = None
-
         # pysam file handles for output BAM filenames
         self.keep_bam = None
         self.remap_bam = None
-
-                
         # name of output fastq files
         self.fastq_single_filename = None
         self.fastq1_filename = None
@@ -55,30 +38,12 @@ class DataFiles(object):
         self.fastq1 = None
         self.fastq2 = None
         self.fastq_single = None
-
         # name of directory to read SNPs from
         self.snp_dir = snp_dir
-
-        # paths to HDF5 files to read SNP info from
-        self.snp_tab_filename = snp_tab_filename
-        self.snp_index_filename = snp_index_filename
-        self.haplotype_filename = haplotype_filename
-
-        if self.snp_tab_filename:
-            self.snp_tab_h5 = tables.open_file(snp_tab_filename, "r")
-            self.snp_index_h5 = tables.open_file(snp_index_filename, "r")
-            self.hap_h5 = tables.open_file(haplotype_filename, "r")
-        else:
-            self.snp_tab_h5 = None
-            self.snp_index_h5 = None
-            self.hap_h5 = None
-
-            
         # separate input directory and bam filename
         tokens = self.bam_filename.split("/")
         bam_dir = "/".join(tokens[:-1])
         filename = tokens[-1]
-
         if output_dir is None:
             # if no output dir specified, use same directory as input
             # bam file
@@ -86,38 +51,23 @@ class DataFiles(object):
         else:
             if output_dir.endswith("/"):
                 # strip trailing '/' from output dir name
-                output_dir = output_dir[:-1]
-                
+                output_dir = output_dir[:-1]      
         name_split = filename.split(".")
         if len(name_split) > 1:
            self.prefix = output_dir + "/" + ".".join(name_split[:-1])
         else:
             self.prefix = output_dir + "/" + name_split[0]
-        
         # create output dir if does not exist
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-
-            
         # TODO: could allow names of output files to be specified
         # on command line rather than appending name to prefix
         sys.stderr.write("prefix: %s\n" % self.prefix)
-        
-        if not is_sorted:
-            util.sort_bam(self.bam_filename, self.prefix)
-            self.bam_sort_filename = self.prefix + ".sort.bam"
-        else:
-            self.bam_sort_filename = self.bam_filename
-
         self.keep_filename = self.prefix + ".keep.bam"
         self.remap_filename = self.prefix + ".to.remap.bam"
-
         sys.stderr.write("reading reads from:\n  %s\n" %
-                         self.bam_sort_filename)
-        
+                         self.bam_filename)
         sys.stderr.write("writing output files to:\n")
-
-        
         if self.is_paired:
             self.fastq1_filename = self.prefix + ".remap.fq1.gz"
             self.fastq2_filename = self.prefix + ".remap.fq2.gz"
@@ -129,13 +79,11 @@ class DataFiles(object):
                              (self.fastq1_filename,
                               self.fastq2_filename,
                               self.fastq_single_filename))
-            
         else:
             self.fastq_single_filename = self.prefix + ".remap.fq.gz"
             self.fastq_single = gzip.open(self.fastq_single_filename, "wt")
             sys.stderr.write("  %s\n" % (self.fastq_single_filename))
-
-        self.input_bam = pysam.Samfile(self.bam_sort_filename, "r")
+        self.input_bam = pysam.Samfile(self.bam_filename, "r")
         self.keep_bam = pysam.Samfile(self.keep_filename, "w",
                                       template=self.input_bam)
         self.remap_bam = pysam.Samfile(self.remap_filename, "w",
@@ -144,20 +92,17 @@ class DataFiles(object):
                                            self.remap_filename))
 
 
-    
-        
     def close(self):
         """close open filehandles"""
-        filehandles = [self.keep_bam, self.remap_bam, self.fastq1,
-                       self.fastq2, self.fastq_single,
-                       self.snp_tab_h5, self.snp_index_h5,
-                       self.hap_h5]
-
+        filehandles = [
+            self.input_bam, self.keep_bam, self.remap_bam, self.fastq1,
+            self.fastq2, self.fastq_single
+        ]
         for fh in filehandles:
             if fh:
                 fh.close()
 
-        
+
 class ReadStats(object):
     """Track information about reads and SNPs that they overlap"""
 
@@ -168,46 +113,33 @@ class ReadStats(object):
         self.alt_count = 0
         # number of reads that overlap SNP but match neither allele
         self.other_count = 0
-
         # number of reads discarded becaused not mapped
         self.discard_unmapped = 0
-        
         # number of reads discarded because not proper pair
         self.discard_improper_pair = 0
-
         # number of reads discarded because mate unmapped
         self.discard_mate_unmapped = 0
-
         # paired reads map to different chromosomes
         self.discard_different_chromosome = 0
-
         # number of reads discarded because overlap an indel
         self.discard_indel = 0
-
         # number of reads discarded because secondary match
         self.discard_secondary = 0
-
         # number of chimeric reads discarded
         self.discard_supplementary = 0
-
         # number of reads discarded because of too many overlapping SNPs
         self.discard_excess_snps = 0
-        
         # number of reads discarded because too many allelic combinations
         self.discard_excess_reads = 0
-
         # when read pairs share SNP locations but have different alleles there
         self.discard_discordant_shared_snp = 0
-        
         # reads where we expected to see other pair, but it was missing
         # possibly due to read-pairs with different names
         self.discard_missing_pair = 0
-        
         # number of single reads kept
         self.keep_single = 0
         # number of read pairs kept
         self.keep_pair = 0
-
         # number of single reads that need remapping
         self.remap_single = 0
         # number of read pairs kept
@@ -261,12 +193,10 @@ class ReadStats(object):
                                  "either allele (%.1f%%). SNP coordinates "
                                  "in input file may be incorrect.\n" %
                                  mismatch_pct)
-    
-
 
 
 def parse_options():
-    
+
     parser = argparse.ArgumentParser(description="Looks for SNPs and indels "
                                      "overlapping reads. If a read overlaps "
                                      "SNPs, alternative versions of the read "
@@ -276,119 +206,39 @@ def parse_options():
                                      "are written to a 'keep' BAM file."
                                      "Reads that overlap indels are presently "
                                      "discarded.")
-                                   
-
     parser.add_argument("--is_paired_end", "-p", action='store_true',
                         dest='is_paired_end', 
                         default=False,
                         help=("Indicates that reads are paired-end "
                               "(default is single)."))
-    
-    parser.add_argument("--is_sorted", "-s", action='store_true',
-                        dest='is_sorted', 
-                        default=False,
-                        help=('Indicates that the input BAM file'
-                              ' is coordinate-sorted (default '
-                              'is False).'))
-    
     parser.add_argument("--max_seqs", type=int, default=MAX_SEQS_DEFAULT,
                         help="The maximum number of sequences with different "
                         "allelic combinations to consider remapping "
                         "(default=%d). Read pairs with more allelic "
                         "combinations than MAX_SEQs are discarded" %
                         MAX_SEQS_DEFAULT)
-
     parser.add_argument("--max_snps", type=int, default=MAX_SNPS_DEFAULT,
                         help="The maximum number of SNPs allowed to overlap "
                         "a read before discarding the read. Allowing higher "
                         "numbers will decrease speed and increase memory "
                         "usage (default=%d)."
                          % MAX_SNPS_DEFAULT)
-    
     parser.add_argument("--output_dir", default=None,
                         help="Directory to write output files to. If not "
                         "specified, output files are written to the "
                         "same directory as the input BAM file.")
-
-    parser.add_argument("--snp_dir", action='store', 
+    parser.add_argument("snp_dir", action='store', 
                         help="Directory containing SNP text files "
                         "This directory should contain one file per "
-                        "chromosome named like chr<#>.snps.txt.gz. "
+                        "chromosome named like <chr>.txt.gz. "
                         "Each file should contain 3 columns: position "
-                        "RefAllele AltAllele. This option should "
-                        "only be used if --snp_tab, --snp_index, "
-                        "and --haplotype arguments are not used."
-                        " If this argument is provided, all possible "
-                        "allelic combinations are used (rather "
-                        "than set of observed haplotypes).",
-                        default=None)
-        
-
-    parser.add_argument("--snp_tab",
-                        help="Path to HDF5 file to read SNP information "
-                        "from. Each row of SNP table contains SNP name "
-                        "(rs_id), position, allele1, allele2.",
-                        metavar="SNP_TABLE_H5_FILE",
-                        default=None)
-    
-    parser.add_argument("--snp_index",
-                        help="Path to HDF5 file containing SNP index. The "
-                        "SNP index is used to convert the genomic position "
-                        "of a SNP to its corresponding row in the haplotype "
-                        "and snp_tab HDF5 files.",
-                        metavar="SNP_INDEX_H5_FILE",
-                        default=None)
-    
-    parser.add_argument("--haplotype",
-                        help="Path to HDF5 file to read phased haplotypes "
-                        "from. When generating alternative reads "
-                        "use known haplotypes from this file rather "
-                        "than all possible allelic combinations.",
-                        metavar="HAPLOTYPE_H5_FILE",
-                        default=None)
-
-    parser.add_argument("--samples",
-                        help="Use only haplotypes and SNPs that are "
-                        "polymorphic in these samples. "
-                        "SAMPLES can either be a comma-delimited string "
-                        "of sample names or a path to a file with one sample "
-                        "name per line (file is assumed to be whitespace-"
-                        "delimited and first column is assumed to be sample "
-                        "name). Sample names should match those present in the "
-                        "--haplotype file. Samples are ignored if no haplotype "
-                        "file is provided.",
-                        metavar="SAMPLES")
-                        
+                        "RefAllele AltAllele.",
+                        default=None)             
     parser.add_argument("bam_filename", action='store',
                         help="Coordinate-sorted input BAM file "
                         "containing mapped reads.")
-    
-        
     options = parser.parse_args()
-
-    if options.snp_dir:
-        if(options.snp_tab or options.snp_index or options.haplotype):
-            parser.error("expected --snp_dir OR (--snp_tab, --snp_index and "
-                         "--haplotype) arguments but not both")
-    else:
-        if not (options.snp_tab and options.snp_index and options.haplotype):
-            parser.error("either --snp_dir OR (--snp_tab, "
-                         "--snp_index AND --haplotype) arguments must be "
-                         "provided")
-    
-    if options.samples and not options.haplotype:
-        # warn because no way to use samples if haplotype file not specified
-        sys.stderr.write("WARNING: ignoring --samples argument "
-                         "because --haplotype argument not provided")
-
     return options
-
-
-
-
-
-
-
 
 
 def write_read(read, snp_tab, snp_idx, read_pos):
@@ -405,9 +255,6 @@ def write_read(read, snp_tab, snp_idx, read_pos):
     sys.stderr.write("READ: %s\n" % read.query_sequence)
     sys.stderr.write("A1:   %s\n" % "".join(snp_allele1))
     sys.stderr.write("A2:   %s\n" % "".join(snp_allele2))
-    
-    
-        
 
 
 def count_ref_alt_matches(read, read_stats, snp_tab, snp_idx, read_pos):
@@ -427,161 +274,7 @@ def count_ref_alt_matches(read, read_stats, snp_tab, snp_idx, read_pos):
         else:
             # read matches neither ref nor other
             read_stats.other_count += 1
-            
 
-def get_unique_haplotypes(haplotypes, phasing, snp_idx):
-    """
-    returns list of vectors of unique haplotypes for this set of SNPs
-    all possible combinations of ref/alt are calculated at unphased sites
-    """
-    haps = haplotypes[snp_idx,:].T
-    
-    # get phasing of SNPs for each individual as bool array
-    # True = unphased and False = phased
-    if phasing is not None:
-        phasing = np.logical_not(phasing[snp_idx, :].T.astype(bool))
-    else:
-        # assume all SNPs are unphased
-        phasing = np.full((int(haps.shape[0]/2), haps.shape[1]), True)
-
-    # if a haplotype has unphased SNPs, generate all possible allelic
-    # combinations and add each combination as a new haplotype
-    new_haps = []
-    # iterate through each individual
-    for i in range(len(phasing)):
-        # get the haplotype data for this individual
-        hap_pair = haps[i*2:(i*2)+2]
-        # get bool index of cols in hap_pair that contain hets
-        hets = np.not_equal(hap_pair[0], hap_pair[1])
-        # get bool index of cols in hap_pair that are both unphased and hets
-        phase = np.logical_and(phasing[i], hets)
-        # get all combinations of indices at unphased cols
-        # then, index into hap_pair with each combination
-        for j in product([0, 1], repeat=sum(phase)):
-            # index into hap_pair using all ref genes at genotyped columns
-            ref = np.repeat(0, hap_pair.shape[1])
-            np.place(ref, phase, j)
-            new_haps.append(hap_pair[ref, range(len(ref))])
-            # index into hap_pair using all alt genes at genotyped columns
-            alt = np.repeat(1, hap_pair.shape[1])
-            np.place(alt, phase, j)
-            new_haps.append(hap_pair[alt, range(len(alt))])
-    # add new haps to old haps
-    haps = np.concatenate((haps, new_haps))
-
-
-    # create view of data that joins all elements of column
-    # into single void datatype
-    h = np.ascontiguousarray(haps).view(np.dtype((np.void, haps.dtype.itemsize * haps.shape[1])))
-
-    # get index of unique columns
-    _, idx = np.unique(h, return_index=True)
-
-
-    return haps[idx,:]
-
-
-            
-def generate_haplo_reads(read_seq, snp_idx, read_pos, ref_alleles, alt_alleles,
-                         haplo_tab, phase_tab):
-    """
-      read_seq - a string representing the the sequence of the read in question
-      snp_index - a list of indices of SNPs that this read overlaps
-      read_pos - a list of positions in read_seq that overlap SNPs
-      ref_alleles - a np array of reference alleles with
-                    indices corresponding to snp_index
-      alt_alleles - a np array of alternate alleles with
-                    indices corresponding to snp_index
-      haplo_tab - a pytables node with haplotypes from haplotype.h5
-    """
-    haps = get_unique_haplotypes(haplo_tab, phase_tab, snp_idx)
-
-    # sys.stderr.write("UNIQUE haplotypes: %s\n"
-    #                  "read_pos: %s\n"
-    #                 % (repr(haps), read_pos))
-    
-    read_len = len(read_seq)
-
-    new_read_list = set()
-
-    # loop over haplotypes
-    for hap in haps:
-        new_read = []
-        cur_pos = 1
-
-        missing_data = False
-
-        # loop over the SNPs to get alleles that make up this haplotype
-        for i in range(len(hap)):
-            if read_pos[i] > cur_pos:
-                # add segment of read
-                new_read.append(read_seq[cur_pos-1:read_pos[i]-1])
-            # add segment for appropriate allele
-            if hap[i] == 0:
-                # reference allele
-                new_read.append(ref_alleles[i].decode("utf-8"))
-            elif hap[i] == 1:
-                # alternate allele
-                new_read.append(alt_alleles[i].decode("utf-8"))
-            else:
-                # haplotype has unknown genotype so skip it...
-                missing_data = True
-                break
-            
-
-            cur_pos = read_pos[i] + 1
-
-
-        if read_len >= cur_pos:
-            # add final segment
-            new_read.append(read_seq[cur_pos-1:read_len])
-            
-        if not missing_data:
-            new_seq = "".join(new_read)
-
-            # sanity check: read should be same length as original
-            if len(new_seq) != read_len:
-                raise ValueError("Expected read len to be %d but "
-                                 "got %d.\n"
-                                 "ref_alleles: %s\n"
-                                 "alt_alleles: %s\n"
-                                 "read_pos: %s\n"
-                                 "snp_idx: %s\n"
-                                 "haps: %s\n" 
-                                 % (read_len, len(new_seq),
-                                    repr(ref_alleles), repr(alt_alleles),
-                                    repr(read_pos), repr(snp_idx),
-                                    repr(haps)))
-
-            new_read_list.add("".join(new_seq))
-
-    return new_read_list
-
-
-# Function raises assertion error for incorrect alleles
-def check_alleles(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
-    # Check positions and alleles are the same length
-    assert(len(read_pos) == len(ref_alleles))
-    assert(len(read_pos) == len(alt_alleles))
-    # Check positions are sorted and within read sequence
-    assert(sorted(read_pos) == read_pos)
-    assert(min(read_pos) > 0)
-    assert(max(read_pos) <= len(read_seq))
-    # Check for overlapping non-identical reference positions
-    ref_ranges = []
-    for pos, ref in zip(read_pos, ref_alleles):
-        # Get range of reference allele
-        pos -= 1
-        ref_range = (pos, pos + len(ref))
-        # Check range doesn't partially overlap previous range
-        if ref_ranges:
-            if ref_range[0] < ref_ranges[-1][1]:
-                assert(ref_range == ref_ranges[-1])
-        # Append range
-        ref_ranges.append(ref_range)
-    # Check reference alleles do not extend beyond read length
-    assert(ref_ranges[-1][1] <= len(read_seq))
-  
 
 # Function generates alternative reads for supplied alleles   
 def generate_reads(read_seq, read_qual, read_pos, ref_alleles, alt_alleles):
@@ -732,10 +425,11 @@ def filter_reads(files, max_seqs=MAX_SEQS_DEFAULT, max_snps=MAX_SNPS_DEFAULT,
             # use HDF5 files if they are provided, otherwise use text
             # files from SNP dir
             if files.snp_tab_h5:
-                sys.stderr.write("reading SNPs from file '%s'\n" %
-                                 files.snp_tab_h5.filename)
-                snp_tab.read_h5(files.snp_tab_h5, files.snp_index_h5,
-                                files.hap_h5, cur_chrom, samples)
+                raise ValueError('Have not yet incoporate indels with HDF5 files')
+                # sys.stderr.write("reading SNPs from file '%s'\n" %
+                #                  files.snp_tab_h5.filename)
+                # snp_tab.read_h5(files.snp_tab_h5, files.snp_index_h5,
+                #                 files.hap_h5, cur_chrom, samples)
             else:
                 snp_filename = "%s/%s.snps.txt.gz" % (files.snp_dir, cur_chrom)
                 sys.stderr.write("reading SNPs from file '%s'\n" % snp_filename)
@@ -926,24 +620,14 @@ def process_paired_read(read1, read2, read_stats, files,
             if len(snp_read_pos) > max_snps:
                 read_stats.discard_excess_snps += 1
                 return
-
-            if files.hap_h5:
-                # generate reads using observed set of haplotypes
-                read_seqs = generate_haplo_reads(read.query_sequence,
-                                                 snp_idx,
-                                                 snp_read_pos,
-                                                 ref_alleles, alt_alleles,
-                                                 snp_tab.haplotypes,
-                                                 snp_tab.phase)
-            else:
-                # generate all possible allelic combinations of reads
-                read_seqs = generate_reads(
-                    read_seq=read.query_sequence,
-                    read_qual=read.query_qualities,
-                    read_pos=snp_read_pos,
-                    ref_alleles=ref_alleles,
-                    alt_alleles=alt_alleles
-                )
+            # generate all possible allelic combinations of reads
+            read_seqs = generate_reads(
+                read_seq=read.query_sequence,
+                read_qual=read.query_qualities,
+                read_pos=snp_read_pos,
+                ref_alleles=ref_alleles,
+                alt_alleles=alt_alleles
+            )
 
             
             new_reads.append(read_seqs)
@@ -996,12 +680,7 @@ def process_paired_read(read1, read2, read_stats, files,
         files.remap_bam.write(read1)
         files.remap_bam.write(read2)
         read_stats.remap_pair += 1
-        
 
-        
-    
-
-    
 
 def process_single_read(
     read, read_stats, files, snp_tab, max_seqs, max_snps
@@ -1033,13 +712,6 @@ def process_single_read(
         if len(snp_read_pos) > max_snps:
             read_stats.discard_excess_snps += 1
             return
-
-        if files.hap_h5:
-            read_seqs = generate_haplo_reads(read.query_sequence, snp_idx,
-                                             snp_read_pos,
-                                             ref_alleles, alt_alleles,
-                                             snp_tab.haplotypes,
-                                             snp_tab.phase)
         else:
             read_seqs = generate_reads(
                 read_seq=read.query_sequence,
@@ -1075,72 +747,19 @@ def process_single_read(
         # no SNPs overlap read, write to keep file
         files.keep_bam.write(read)
         read_stats.keep_single += 1
-            
 
 
-
-def parse_samples(samples_str):
-    """Gets list of samples from --samples argument. This may be 
-    a comma-delimited string or a path to a file. If a file is provided 
-    then the first column of the file is assumed to be the sample name"""
-
-    if samples_str is None:
-        return None
-        
-    # first check if this is a path to a file
-    if os.path.exists(samples_str) and not os.path.isdir(samples_str):
-        samples = []
-
-        if util.is_gzipped(samples_str):
-            f = gzip.open(samples_str, "rt")
-        else:
-            f = open(samples_str, "rt")
-
-        for line in f:
-            # assume first token in line is sample name
-            samples.append(line.split()[0])
-
-        sys.stderr.write("read %d sample names from file '%s'\n" %
-                         (len(samples), samples_str))
-                    
-        f.close()
-    else:    
-        # otherwise assume comma-delimited string
-        if ("/" in samples_str or "\\" in samples_str):
-            sys.stderr.write("WARNING: --samples argument (%s) "
-                             "does not look like list of sample names "
-                             "(contains '/' or '\\') but is not path to "
-                             "valid file. Assuming it is list of sample "
-                             "names anyway." % samples_str)
-
-        samples = samples_str.split(",")
-        sys.stderr.write("SAMPLES: %s\n"% repr(samples))
-
-
-    return samples
-
-
-        
 def main(bam_filenames, is_paired_end=False,
          is_sorted=False, max_seqs=MAX_SEQS_DEFAULT,
          max_snps=MAX_SNPS_DEFAULT, output_dir=None,
-         snp_dir=None, snp_tab_filename=None,
-         snp_index_filename=None,
-         haplotype_filename=None, samples=None):
-
-    files = DataFiles(bam_filenames,  is_sorted, is_paired_end,
+         snp_dir=None):
+    files = DataFiles(bam_filenames, is_sorted, is_paired_end,
                       output_dir=output_dir,
-                      snp_dir=snp_dir,
-                      snp_tab_filename=snp_tab_filename,
-                      snp_index_filename=snp_index_filename,
-                      haplotype_filename=haplotype_filename)
-    
+                      snp_dir=snp_dir)
     filter_reads(files, max_seqs=max_seqs, max_snps=max_snps,
                  samples=samples)
-
     files.close()
-    
-    
+
 
 if __name__ == '__main__':
     sys.stderr.write("command line: %s\n" % " ".join(sys.argv))
@@ -1153,16 +772,11 @@ if __name__ == '__main__':
     util.check_python_version()
         
     options = parse_options()
-    samples = parse_samples(options.samples)
     
     main(options.bam_filename,
-         is_paired_end=options.is_paired_end, is_sorted=options.is_sorted,
+         is_paired_end=options.is_paired_end,
          max_seqs=options.max_seqs, max_snps=options.max_snps,
          output_dir=options.output_dir,
-         snp_dir=options.snp_dir,
-         snp_tab_filename=options.snp_tab,
-         snp_index_filename=options.snp_index,
-         haplotype_filename=options.haplotype,
-         samples=samples)
+         snp_dir=options.snp_dir)
          
     
