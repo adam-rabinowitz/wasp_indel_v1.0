@@ -34,33 +34,39 @@ class SNPTable(object):
         # Loop through lines of input file
         for line in f:
             # Extract position and variant from line
-            pos, a1, a2 = line.strip().split('\t')
+            pos, ref, alt = line.strip().split()
             pos = int(pos) - 1
-            a1 = a1.upper().replace("-", "")
-            a2 = a2.upper().replace("-", "")
+            ref = ref.upper().replace("-", "")
+            alt = alt.upper().replace("-", "")
             # Check position and variants
             if pos < 0:
                 raise ValueError("SNP position < 0: {}".format(line))
-            if len(a1) < 1:
+            if len(ref) < 1:
                 raise ValueError("absent reference allele: {}".format(line))
             # Add interval and alleles to dictionary
-            interval = (pos, pos + len(a1))
-            alleles = (a1, a2)
-            allele_dict[interval].append(alleles)
+            interval = (pos, pos + len(ref))
+            if interval in allele_dict:
+                raise ValueError('duplicated reference bases')
+            else:
+                allele_dict[interval] = (ref, alt)
         f.close()
         # Create interval tree from all potential alleles
         interval_list = [
-            intervaltree.Interval(interval[0], interval[1], tuple(alleles))
-            for
-            interval, alleles in allele_dict.items()
+            intervaltree.Interval(start, end, (ref, alt)) for
+            (start, end), (ref, alt) in allele_dict.items()
         ]
         self.alleles = intervaltree.IntervalTree(
             interval_list
         )
 
     def get_overlapping_alleles(self, read):
-        # Get position of alleles
-        alleles = self.alleles.overlap(
+        # Get intervals contained entirely within mapped positions
+        alleles = self.alleles.envelop(
             read.reference_start, read.reference_end
         )
-        return(alleles)
+        # Convert to tuples sort and return
+        allele_tuple = [
+            (x.begin, x.end, x.data[0], x.data[1]) for x in alleles
+        ]
+        allele_tuple = sorted(allele_tuple)
+        return(allele_tuple)
