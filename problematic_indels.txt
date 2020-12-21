@@ -1,0 +1,24 @@
+Ho do we handle these variants?
+
+Example Alignment
+position: 1 2 3 4 5 6 7 - 8 9
+sequence:   A T G - - C A T
+
+Variant partially overlapping read start
+1 TA CGG
+
+Variant partially overlapping read end
+8 TG C
+
+Partially missing Variant
+4 GCA ATT
+
+Totally missing Variant
+5 GC ATG
+
+Overlapping variants
+2 AT C
+3 TG AAA
+
+Variant over an insertion
+7 C G
