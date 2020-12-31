@@ -2,185 +2,189 @@ from find_intersecting_snps import generate_reads
 import unittest
 
 
-class MissTestErrors(unittest.TestCase):
+# class MissTestErrors(unittest.TestCase):
 
-    def test_missing_position(self):
-        with self.assertRaises(AssertionError):
-            generate_reads(
-                read_seq='AAAAAAAA',
-                read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-                read_pos=[1],
-                ref_alleles=[b'A', b'G'],
-                alt_alleles=[b'G', b'C']
-            )
+#     def test_low_position(self):
+#         with self.assertRaises(AssertionError):
+#             generate_reads(
+#                 read_seq='AAAAAAAA',
+#                 read_qual=[20, 22, 24, 26, 28, 30, 32, 34],
+#                 read_pos=[0],
+#                 ref_alleles=[b'A'],
+#                 alt_alleles=[b'G']
+#             )
 
-    def test_missing_ref(self):
-        with self.assertRaises(AssertionError):
-            generate_reads(
-                read_seq='AAAAAAAA',
-                read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-                read_pos=[1, 8],
-                ref_alleles=[b'A'],
-                alt_alleles=[b'G', b'C']
-            )
+#     def test_high_position(self):
+#         with self.assertRaises(AssertionError):
+#             generate_reads(
+#                 read_seq='AAAAAAAA',
+#                 read_qual=[20, 22, 24, 26, 28, 30, 32, 34],
+#                 read_pos=[9],
+#                 ref_alleles=[b'A'],
+#                 alt_alleles=[b'G']
+#             )
 
-    def test_missing_alt(self):
-        with self.assertRaises(AssertionError):
-            generate_reads(
-                read_seq='AAAAAAAA',
-                read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-                read_pos=[1, 8],
-                ref_alleles=[b'A', b'G'],
-                alt_alleles=[b'G']
-            )
+#     def test_extend_position(self):
+#         with self.assertRaises(AssertionError):
+#             generate_reads(
+#                 read_seq='AAAAAAAA',
+#                 read_qual=[20, 22, 24, 26, 28, 30, 32, 34],
+#                 read_pos=[8],
+#                 ref_alleles=[b'AA'],
+#                 alt_alleles=[b'G']
+#             )
 
-    def test_low_position(self):
-        with self.assertRaises(AssertionError):
-            generate_reads(
-                read_seq='AAAAAAAA',
-                read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-                read_pos=[0],
-                ref_alleles=[b'A'],
-                alt_alleles=[b'G']
-            )
-
-    def test_high_position(self):
-        with self.assertRaises(AssertionError):
-            generate_reads(
-                read_seq='AAAAAAAA',
-                read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-                read_pos=[9],
-                ref_alleles=[b'A'],
-                alt_alleles=[b'G']
-            )
-
-    def test_extend_position(self):
-        with self.assertRaises(AssertionError):
-            generate_reads(
-                read_seq='AAAAAAAA',
-                read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-                read_pos=[8],
-                ref_alleles=[b'AA'],
-                alt_alleles=[b'G']
-            )
-
-    def test_overlapping_variants(self):
-        with self.assertRaises(AssertionError):
-            generated_reads = generate_reads(
-                read_seq='AAAAAAAA',
-                read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-                read_pos=[5, 7],
-                ref_alleles=[b'AAA', b'C'],
-                alt_alleles=[b'GCT', b'T']
-            )
+#     def test_overlapping_variants(self):
+#         with self.assertRaises(AssertionError):
+#             generated_reads = generate_reads(
+#                 read_seq='AAAAAAAA',
+#                 read_qual=[20, 22, 24, 26, 28, 30, 32, 34],
+#                 read_pos=[5, 7],
+#                 ref_alleles=[b'AAA', b'C'],
+#                 alt_alleles=[b'GCT', b'T']
+#             )
 
 
 class TestSnpMethods(unittest.TestCase):
 
     def test_single_reference_snp(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[3],
-            ref_alleles=[b'A'],
-            alt_alleles=[b'T']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(2, 3, 'A', 'G')]
         )
         expected_reads = {
-            ('AATAAAAA', (10, 12, 14, 16, 18, 20, 22, 24))
+            'AAGAAAAA': [20, 22, 24, 26, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_single_nonreference_snp(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[3],
-            ref_alleles=[b'C'],
-            alt_alleles=[b'T']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(6, 7, 'T', 'C,G,A')]
         )
         expected_reads = {
-            ('AATAAAAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AACAAAAA', (10, 12, 14, 16, 18, 20, 22, 24))
+            'AAAAAATA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAAACA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAAAGA': [20, 22, 24, 26, 28, 30, 32, 34]
+        }
+        self.assertEqual(generated_reads, expected_reads)
+
+    def test_single_start_snp(self):
+        generated_reads = generate_reads(
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(0, 1, 'C', 'G')]
+        )
+        expected_reads = {
+            'CAAAAAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'GAAAAAAA': [20, 22, 24, 26, 28, 30, 32, 34]
+        }
+        self.assertEqual(generated_reads, expected_reads)
+
+    def test_single_end_snp(self):
+        generated_reads = generate_reads(
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(7, 8, 'A', 'G,T')]
+        )
+        expected_reads = {
+            'AAAAAAAG': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAAAAT': [20, 22, 24, 26, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_double_snp(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[2, 6],
-            ref_alleles=[b'C', b'A'],
-            alt_alleles=[b'T', b'G']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(1, 2, 'C', 'T'), (5, 6, 'A', 'G')]
         )
         expected_reads = {
-            ('ATAAAAAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('ACAAAAAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAGAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('ATAAAGAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('ACAAAGAA', (10, 12, 14, 16, 18, 20, 22, 24))
+            'ATAAAAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'ACAAAAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAAGAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'ATAAAGAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'ACAAAGAA': [20, 22, 24, 26, 28, 30, 32, 34]
+        }
+        self.assertEqual(generated_reads, expected_reads)
+
+    def test_double_neighbouring_snp(self):
+        generated_reads = generate_reads(
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(3, 4, 'C', 'T'), (4, 5, 'A', 'G,T')]
+        )
+        expected_reads = {
+            'AAATAAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAACAAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAGAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAATAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAATGAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAATTAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAACGAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAACTAAA': [20, 22, 24, 26, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_double_terminal_snp(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[1, 8],
-            ref_alleles=[b'A', b'G'],
-            alt_alleles=[b'G', b'C']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(0, 1, 'A', 'G'), (7, 8, 'G', 'C')]
         )
         expected_reads = {
-            ('GAAAAAAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAAAG', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAAAC', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('GAAAAAAG', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('GAAAAAAC', (10, 12, 14, 16, 18, 20, 22, 24))
+            'GAAAAAAA': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAAAAG': [20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAAAAC': [20, 22, 24, 26, 28, 30, 32, 34],
+            'GAAAAAAG': [20, 22, 24, 26, 28, 30, 32, 34],
+            'GAAAAAAC': [20, 22, 24, 26, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
 
 class TestLargerNonIndelMethods(unittest.TestCase):
+
     def test_single_reference_variant(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[3],
-            ref_alleles=[b'AA'],
-            alt_alleles=[b'TT']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(2, 4, 'AA', 'TT,TG')]
         )
         expected_reads = {
-            ('AATTAAAA', (10, 12, 14, 16, 18, 20, 22, 24))
+            'AATTAAAA': [20, 22, 25, 25, 28, 30, 32, 34],
+            'AATGAAAA': [20, 22, 25, 25, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
-    def test_single_nonreference_variant(self):
+    def test_end_nonreference_variant(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[7],
-            ref_alleles=[b'CG'],
-            alt_alleles=[b'TT']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(6, 8, 'CG', 'TT')]
         )
         expected_reads = {
-            ('AAAAAACG', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAATT', (10, 12, 14, 16, 18, 20, 22, 24))
+            'AAAAAACG': [20, 22, 24, 26, 28, 30, 33, 33],
+            'AAAAAATT': [20, 22, 24, 26, 28, 30, 33, 33]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_multiple_variants(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[2, 7],
-            ref_alleles=[b'AAA', b'CG'],
-            alt_alleles=[b'GCT', b'TT']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(0, 3, 'AAA', 'GCT,TCT'), (6, 8, 'CG', 'TT')]
         )
         expected_reads = {
-            ('AGCTAAAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAACG', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAATT', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AGCTAACG', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AGCTAATT', (10, 12, 14, 16, 18, 20, 22, 24))
+            'GCTAAAAA': [22, 22, 22, 26, 28, 30, 32, 34],
+            'TCTAAAAA': [22, 22, 22, 26, 28, 30, 32, 34],
+            'AAAAAACG': [20, 22, 24, 26, 28, 30, 33, 33],
+            'AAAAAATT': [20, 22, 24, 26, 28, 30, 33, 33],
+            'GCTAAACG': [22, 22, 22, 26, 28, 30, 33, 33],
+            'TCTAAACG': [22, 22, 22, 26, 28, 30, 33, 33],
+            'GCTAAATT': [22, 22, 22, 26, 28, 30, 33, 33],
+            'TCTAAATT': [22, 22, 22, 26, 28, 30, 33, 33]
         }
         self.assertEqual(generated_reads, expected_reads)
 
@@ -189,100 +193,125 @@ class TestDeletionMethods(unittest.TestCase):
 
     def test_single_reference_deletion(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[3],
-            ref_alleles=[b'AA'],
-            alt_alleles=[b'A']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(2, 4, 'AA', 'A')]
         )
         expected_reads = {
-            ('AAAAAAA', (10, 12, 15, 18, 20, 22, 24))
+            'AAAAAAA': [20, 22, 25, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_single_nonreference_deletion(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[1],
-            ref_alleles=[b'TAT'],
-            alt_alleles=[b'G']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(0, 3, 'TAT', 'G,CC,')]
         )
         expected_reads = {
-            ('TATAAAAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('GAAAAA', (12, 16, 18, 20, 22, 24))
+            'TATAAAAA': [22, 22, 22, 26, 28, 30, 32, 34],
+            'GAAAAA': [22, 26, 28, 30, 32, 34],
+            'CCAAAAA': [22, 22, 26, 28, 30, 32, 34],
+            'AAAAA': [26, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_multiple_deletions(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[2, 6],
-            ref_alleles=[b'AAA', b'TAC'],
-            alt_alleles=[b'TG', b'T']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(1, 3, 'TG', 'T'), (5, 8, 'AAA', 'TC,GC')]
         )
         expected_reads = {
-            ('ATGAAAA', '0224567'),
-            ('AAAAATAC', '01234567'),
-            ('AAAAAT', '012346'),
-            ('ATGATAC', '0224567'),
-            ('ATGAT', '02246')
-        }
-        expected_reads = {
-            ('ATGAAAA', (10, 14, 14, 18, 20, 22, 24)),
-            ('AAAAATAC', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAT', (10, 12, 14, 16, 18, 22)),
-            ('ATGATAC', (10, 14, 14, 18, 20, 22, 24)),
-            ('ATGAT', (10, 14, 14, 18, 22))
+            'ATGAAAAA': [20, 23, 23, 26, 28, 30, 32, 34],
+            'ATAAAAA': [20, 23, 26, 28, 30, 32, 34],
+            'AAAAATC': [20, 22, 24, 26, 28, 32, 32],
+            'AAAAAGC': [20, 22, 24, 26, 28, 32, 32],
+            'ATGAATC': [20, 23, 23, 26, 28, 32, 32],
+            'ATGAAGC': [20, 23, 23, 26, 28, 32, 32],
+            'ATAATC': [20, 23, 26, 28, 32, 32],
+            'ATAAGC': [20, 23, 26, 28, 32, 32],
         }
         self.assertEqual(generated_reads, expected_reads)
 
+
 class TestInsertionMethods(unittest.TestCase):
-    
+
     def test_single_reference_insertion(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[3],
-            ref_alleles=[b'A'],
-            alt_alleles=[b'TGAT']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(2, 3, 'A', 'TGAT,TG')]
         )
         expected_reads = {
-            ('AATGATAAAAA', (10, 12, 14, 14, 14, 14, 16, 18, 20, 22, 24))
+            'AATGATAAAAA': [20, 22, 24, 24, 24, 24, 26, 28, 30, 32, 34],
+            'AATGAAAAA': [20, 22, 24, 24, 26, 28, 30, 32, 34]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_single_nonreference_insertion(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[1],
-            ref_alleles=[b'TAT'],
-            alt_alleles=[b'GGGCC']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(0, 3, 'TAT', 'GGGCC')]
         )
         expected_reads = {
-            ('TATAAAAA', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('GGGCCAAAAA', (12, 12, 12, 12, 12, 16, 18, 20, 22, 24))
+            'TATAAAAA': [22, 22, 22, 26, 28, 30, 32, 34],
+            'GGGCCAAAAA': [22, 22, 22, 22, 22, 26, 28, 30, 32, 34]
+        }
+        self.assertEqual(generated_reads, expected_reads)
+
+    def test_single_absent_reference_start(self):
+        generated_reads = generate_reads(
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(0, 0, 'T', 'CC')]
+        )
+        expected_reads = {
+            'TAAAAAAAA': [20, 20, 22, 24, 26, 28, 30, 32, 34],
+            'CCAAAAAAAA': [20, 20, 20, 22, 24, 26, 28, 30, 32, 34]
+        }
+        self.assertEqual(generated_reads, expected_reads)
+
+    def test_single_absent_reference_end(self):
+        generated_reads = generate_reads(
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(8, 8, 'T', 'CC')]
+        )
+        expected_reads = {
+            'AAAAAAAAT': [20, 22, 24, 26, 28, 30, 32, 34, 34],
+            'AAAAAAAACC': [20, 22, 24, 26, 28, 30, 32, 34, 34, 34]
+        }
+        self.assertEqual(generated_reads, expected_reads)
+
+    def test_terminal_insertion(self):
+        generated_reads = generate_reads(
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(5, 8, 'TAC', 'GGCCC')]
+        )
+        expected_reads = {
+            'AAAAATAC': [20, 22, 24, 26, 28, 32, 32, 32],
+            'AAAAAGGCCC': [20, 22, 24, 26, 28, 32, 32, 32, 32, 32]
         }
         self.assertEqual(generated_reads, expected_reads)
 
     def test_multiple_insertions(self):
         generated_reads = generate_reads(
-            read_seq='AAAAAAAA',
-            read_qual=[10, 12, 14, 16, 18, 20, 22, 24],
-            read_pos=[2, 6],
-            ref_alleles=[b'A', b'TAC'],
-            alt_alleles=[b'TGG', b'GGCCC']
+            sequence='AAAAAAAA',
+            quality=[20, 22, 24, 26, 28, 30, 32, 34],
+            variants=[(0, 1, 'A', 'TGG'), (5, 8, 'TAC', 'GGCCC')]
         )
         expected_reads = {
-            ('ATGGAAAAAA', (10, 12, 12, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAATAC', (10, 12, 14, 16, 18, 20, 22, 24)),
-            ('AAAAAGGCCC', (10, 12, 14, 16, 18, 22, 22, 22, 22, 22)),
-            ('ATGGAAATAC', (10, 12, 12, 12, 14, 16, 18, 20, 22, 24)),
-            ('ATGGAAAGGCCC', (10, 12, 12, 12, 14, 16, 18, 22, 22, 22, 22, 22)),
+            'TGGAAAAAAA': [20, 20, 20, 22, 24, 26, 28, 30, 32, 34],
+            'AAAAATAC': [20, 22, 24, 26, 28, 32, 32, 32],
+            'AAAAAGGCCC': [20, 22, 24, 26, 28, 32, 32, 32, 32, 32],
+            'TGGAAAATAC': [20, 20, 20, 22, 24, 26, 28, 32, 32, 32],
+            'TGGAAAAGGCCC': [20, 20, 20, 22, 24, 26, 28, 32, 32, 32, 32, 32]
         }
         self.assertEqual(generated_reads, expected_reads)
+
 
 if __name__ == '__main__':
     unittest.main()
