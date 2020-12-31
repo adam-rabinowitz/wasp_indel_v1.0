@@ -1,244 +1,151 @@
+configfile: 'snakemake_config.yml'
 
-configfile: "snake_conf.yaml"
+# Get read pairing
+if len(config['fastq']) == 1:
+    pair = False
+elif len(config['fastq']) == 2:
+    pair = True
+else:
+    raise ValueError('1 or 2 input fastq files expected')
 
-import glob
-
-
-def read_samples():
-    """Function to get names and fastq paths from a sample file specified
-    in the configuration. Input file is expected to have 4 columns:
-    <1000genomes_id> <unique_sample_id> <fastq1_path> <fastq2_path>. Modify this function
-    as needed to provide a dictionary of sample_id keys and (fastq1, fastq1) 
-    values"""
-    f = open(config['sample_file'], "r")
-    samp_dict = {}
-    for line in f:
-        words = line.strip().split()
-        samp_dict[words[1]] = (words[2], words[3])
-
-    return samp_dict
-
-def read_1kg_samples():
-    f = open(config['sample_file'], "r")
-    samp_dict = {}
-    for line in f:
-        words = line.strip().split()
-        samp_dict[words[1]] = words[0]
-
-    return samp_dict
-
-SAMP_TO_1KG = read_1kg_samples()
-
-
-
-def get_chromosomes():
-    """Gets list of chromosomes with from VCF files"""
-    filenames = os.listdir(config['vcf_dir'])
-
-    chr_names = set([])
-    for filename in filenames:
-        if filename.endswith(".vcf.gz"):
-            m = re.match(".*(chr[0-9A-Z]+).*", filename)
-            if m:
-                chr_names.add(m.groups()[0])
-
-    return chr_names
-    
-
+# Generate a filtered BAM file with duplicates removed
 rule all:
     input:
-        expand(config['output_dir'] + "/as_counts/{sample}.as_counts.txt.gz",
-               sample=read_samples().keys())
+        config['out_prefix'] + '.filtered.rmdup.bam',
+        config['out_prefix'] + '.filtered.rmdup.bai',
+        config['out_prefix'] + '.filtered.rmdup.log',
+        config['out_prefix'] + '.variant_log.txt',
+        config['out_prefix'] + '.filter_log.txt',
+        config['out_prefix'] + '.variant_counts.txt'
 
-
-        
-## Here are rules to use text input files for SNPs instead of
-## HDF5 files (that include haplotype information)
-#
-# rule extract_vcf_snps:
-#     """Makes SNP input files for find_intersecting_snps.py by extracting
-#     information from VCF files."""
-#     input:
-#         config["vcf_dir"]
-#     output:
-#         expand(config["snp_dir"] + "/{chromosome}.snps.txt.gz", chromosome=get_chromosomes())
-#     shell:
-#         "{config[wasp_dir]}/mapping/extract_vcf_snps.sh {input} {config[snp_dir]}"
-#
-# rule find_intersecting_snps_paired_end:
-#     """find intersecting SNPs using WASP script"""
-#     input:
-#         bam=config["output_dir"] + "/map1_sort/{sample}.bam",
-#         snps=[config["snp_dir"] + "/%s.snps.txt.gz" % s for s in get_chromosomes()]
-#     output:
-#         fastq1=config["output_dir"] + "/find_intersecting_snps/{sample}.remap.fq1.gz",
-#         fastq2=config["output_dir"] + "/find_intersecting_snps/{sample}.remap.fq2.gz",
-#         keep_bam=config["output_dir"] + "/find_intersecting_snps/{sample}.keep.bam",
-#         remap_bam=config["output_dir"] + "/find_intersecting_snps/{sample}.to.remap.bam"
-#     shell:
-#         "python {config[wasp_dir]}/mapping/find_intersecting_snps.py "
-#         "    --is_paired_end --is_sorted --output_dir {config[output_dir]}/find_intersecting_snps {input.bam} {config[snp_dir]}"
-
-
-rule vcf2h5:
-    """Convert VCF data files to HDF5 format"""
+# Align initial fastq reads to the genome
+rule first_alignment:
     input:
-        chrom=config['chrom_info'],
-        vcfs=glob.glob(config['vcf_dir'] + "/*chr*.vcf.gz")
+        config['fastq']
     output:
-        snp_index=config['snp_h5_dir'] + "/snp_index.h5",
-        snp_tab=config['snp_h5_dir'] + "/snp_tab.h5",
-        haplotype=config['snp_h5_dir'] + "/haplotype.h5"
-    shell:
-        "{config[wasp_dir]}/snp2h5/snp2h5 "
-        "  --chrom {input.chrom} "
-        "  --format vcf "
-        "  --snp_index {output.snp_index} "
-        "  --snp_tab {output.snp_tab} "
-        "  --haplotype {output.haplotype} "
-        "  {input.vcfs}"
-
-
-rule find_intersecting_snps_paired_end:
-     """find intersecting SNPs using WASP script"""
-     input:
-         bam=config["output_dir"] + "/map1_sort/{sample}.bam",
-         snp_index=config["snp_h5_dir"] + "/snp_index.h5",
-         snp_tab=config["snp_h5_dir"] + "/snp_tab.h5",
-         haplotype=config['snp_h5_dir'] + "/haplotype.h5"
-     output:
-         fastq1=config["output_dir"] + "/find_intersecting_snps/{sample}.remap.fq1.gz",
-         fastq2=config["output_dir"] + "/find_intersecting_snps/{sample}.remap.fq2.gz",
-         keep_bam=config["output_dir"] + "/find_intersecting_snps/{sample}.keep.bam",
-         remap_bam=config["output_dir"] + "/find_intersecting_snps/{sample}.to.remap.bam"
-     shell:
-         "python {config[wasp_dir]}/mapping/find_intersecting_snps.py "
-         "    --is_paired_end "
-         "    --is_sorted "
-         "    --output_dir {config[output_dir]}/find_intersecting_snps "
-         "    --snp_tab {input.snp_tab} "
-         "    --snp_index {input.snp_index} "
-         "    --haplotype {input.haplotype} "
-         "    --samples {config[sample_file]} "
-         "    {input.bam}"
-
-
-         
-rule map_bowtie2_paired_end1:
-    """map reads using bowtie2"""
-    input:
-        fastq1=lambda wildcards: read_samples()[wildcards.sample][0],
-        fastq2=lambda wildcards: read_samples()[wildcards.sample][1]
-    output:
-        config["output_dir"] + "/map1/{sample}.bam"
-    shell:
-        "{config[bowtie2]} -x {config[bowtie2_index]} -1 {input.fastq1} -2 {input.fastq2} "
-        "| {config[samtools]} view -b -q 10 - > {output} "
-
-
-rule sort_and_index_bam1:
-    """sort and index bam generated by first mapping step"""
-    input:
-        config["output_dir"] + "/map1/{sample}.bam"
-    output:
-        config["output_dir"] + "/map1_sort/{sample}.bam",
-        config["output_dir"] + "/map1_sort/{sample}.bam.bai"
-    shell:
-        "{config[samtools]} sort -o {output[0]} {input}; "
-        "{config[samtools]} index {output[0]}"
-
-
-
-rule map_bowtie2_paired_end2:
-    """map reads a second time using bowtie2"""
-    input:
-        fastq1=config['output_dir'] + "/find_intersecting_snps/{sample}.remap.fq1.gz",
-        fastq2=config['output_dir'] + "/find_intersecting_snps/{sample}.remap.fq2.gz"
-    output:
-        config["output_dir"] + "/map2/{sample}.bam"
-    shell:
-        "{config[bowtie2]} -x {config[bowtie2_index]} -1 {input.fastq1} -2 {input.fastq2} "
-        "| {config[samtools]} view -b -q 10 - > {output}"
-        
-
-rule sort_and_index_bam2:
-    """sort and index bam generated by second mapping step"""
-    input:
-        config["output_dir"] + "/map2/{sample}.bam"
-    output:
-        config["output_dir"] + "/map2_sort/{sample}.bam",
-        config["output_dir"] + "/map2_sort/{sample}.bam.bai"
-    shell:
-        "{config[samtools]} sort -o {output[0]} {input} ; "
-        "{config[samtools]} index {output[0]}"
-
-
-rule filter_remapped_reads:
-    """filter reads from second mapping step"""
-    input:
-        to_remap_bam=config['output_dir'] + "/find_intersecting_snps/{sample}.to.remap.bam",
-        remap_bam=config['output_dir'] + "/map2_sort/{sample}.bam",
-    output:
-        keep_bam=config['output_dir'] + "/filter_remapped_reads/{sample}.keep.bam"
-    shell:
-        "python {config[wasp_dir]}/mapping/filter_remapped_reads.py "
-        "  {input.to_remap_bam} {input.remap_bam} {output.keep_bam}"
-
-    
-rule merge_bams:
-    """merge 'keep' BAM files from mapping steps 1 and 2, then sort and index"""
-    input:
-        keep1=config['output_dir'] + "/find_intersecting_snps/{sample}.keep.bam",
-        keep2=config['output_dir'] + "/filter_remapped_reads/{sample}.keep.bam"
-    output:
-        merge=config['output_dir'] + "/merge/{sample}.keep.merge.bam",
-        sort=config['output_dir'] + "/merge/{sample}.keep.merge.sort.bam"
-    shell:
-        "{config[samtools]} merge {output.merge} {input.keep1} {input.keep2}; "
-        "{config[samtools]} sort -o {output.sort} {output.merge}; "
-        "{config[samtools]} index {output.sort}"
-
-    
-rule rmdup_pe:
-    """remove duplicate read pairs"""
-    input:
-        config['output_dir'] + "/merge/{sample}.keep.merge.sort.bam"
-    output:
-        rmdup=config['output_dir'] + "/rmdup/{sample}.keep.merge.rmdup.bam",
-        sort=config['output_dir'] + "/rmdup/{sample}.keep.merge.rmdup.sort.bam"
-    shell:
-        "python {config[wasp_dir]}/mapping/rmdup_pe.py {input} {output.rmdup} ;"
-        "{config[samtools]} sort -o {output.sort} {output.rmdup}; "
-        "{config[samtools]} index {output.sort}"
-        
-
-        
-rule get_as_counts:
-    """get allele-specific read counts for SNPs"""
-    input:
-        bam=config['output_dir'] + "/rmdup/{sample}.keep.merge.rmdup.sort.bam",
-        snp_index=config["snp_h5_dir"] + "/snp_index.h5",
-        snp_tab=config["snp_h5_dir"] + "/snp_tab.h5",
-        haplotype=config['snp_h5_dir'] + "/haplotype.h5",
-        chrom=config['chrom_info']
+        temp(config['out_prefix'] + '.initial.sam')
     params:
-        samp1kg=lambda wildcards: SAMP_TO_1KG[wildcards.sample]
-    output:
-        ref_as=config['output_dir'] + "/as_counts/{sample}.ref_as_counts.h5",
-        alt_as=config['output_dir'] + "/as_counts/{sample}.alt_as_counts.h5",
-        other_as=config['output_dir'] + "/as_counts/{sample}.other_as_counts.h5",
-        read_counts=config['output_dir'] + "/as_counts/{sample}.read_counts.h5",
-        txt_counts=config['output_dir'] + "/as_counts/{sample}.as_counts.txt.gz"
+        fasta = config['fasta'],
+        rg = config['read_group']
     shell:
-        "python {config[wasp_dir]}/CHT/bam2h5.py "
-        "  --chrom {input.chrom} "
-        "  --snp_index {input.snp_index} "
-        "  --snp_tab {input.snp_tab} "
-        "  --haplotype {input.haplotype} "
-        "  --individual {params.samp1kg} "
-        "  --ref_as_counts {output.ref_as} "
-        "  --alt_as_counts {output.alt_as} "
-        "  --other_as_counts {output.other_as} "
-        "  --read_counts {output.read_counts} "
-        "  --txt_counts {output.txt_counts} "
-        "{input.bam}"
+        'bwa mem -R "{params[rg]}" {params[fasta]} {input} > {output}'
+
+# Convert initial alignment to coordinate sorted BAM file
+rule sort_first_alignment:
+    input:
+        config['out_prefix'] + '.initial.sam'
+    output:
+        bam = temp(config['out_prefix'] + '.initial.bam'),
+        bai = temp(config['out_prefix'] + '.initial.bai')
+    shell:
+        'picard SortSam -I {input} -O {output.bam} -SO coordinate '
+        '--CREATE_INDEX true'
+
+# Place alignments not overlapping variants in a BAM file and extract reads
+# overlapping variants, and their allele flipped versions, to a fastq file.
+rule filter_first_alignment:
+    input:
+        bam = config['out_prefix'] + '.initial.bam',
+        bai = config['out_prefix'] + '.initial.bai',
+        vcf = config['vcf']
+    output:
+        bam = temp(config['out_prefix'] + '.invariant.bam'),
+        fastq = temp(config['out_prefix'] + '.remap.fq.gz'),
+        log = config['out_prefix'] + '.variant_log.txt'
+    params:
+        script = config['wasp'] + '/generate_variant_reads.py',
+        prefix = config['out_prefix'],
+        paired = lambda wildcards, pair=pair: '--paired_end' if pair else ''
+    shell:
+        "python {params[script]} {params[paired]} {input.bam} {input.vcf} "
+        "{params[prefix]}"
+
+# Realign reads along with their allele flipped versions
+rule second_alignment:
+    input:
+        config['out_prefix'] + '.remap.fq.gz'
+    output:
+        temp(config['out_prefix'] + '.remap.sam')
+    params:
+        fasta = config['fasta'],
+        rg = config['read_group'],
+        paired = lambda wildcards, pair=pair: '-p' if pair else ''
+    shell:
+        'bwa mem -R "{params[rg]}" {params[paired]} {params[fasta]} {input} > '
+        '{output}'
+
+# Sort second alignment by read name
+rule sort_second_alignment:
+    input:
+        config['out_prefix'] + '.remap.sam'
+    output:
+        temp(config['out_prefix'] + '.remap.bam')
+    shell:
+        'picard SortSam -I {input} -O {output} -SO queryname'
+
+# Extract reads for which the original and allele flipped version align
+# to the same location
+rule filter_second_alignment:
+    input:
+        config['out_prefix'] + '.remap.bam'
+    output:
+        temp(config['out_prefix'] + '.consistent.bam'),
+        config['out_prefix'] + '.filter_log.txt',
+    params:
+        script = config['wasp'] + '/filter_remapped_reads.py',
+        prefix = config['out_prefix'],
+        paired = lambda wildcards, pair=pair: '--paired_end' if pair else '',
+        wobble = '--wobble ' + str(config['wobble'])
+    shell:
+        "python {params[script]} {params[paired]} {params[wobble]} "
+        "{input} {params[prefix]}"
+
+# Merge all passed alignments
+rule merge_alignments:
+    input:
+        bam1 = config['out_prefix'] + '.invariant.bam',
+        bam2 = config['out_prefix'] + '.consistent.bam'
+    output:
+        temp(config['out_prefix'] + '.filtered.bam')
+    shell:
+        'picard GatherBamFiles -I {input.bam1} -I {input.bam2} -O {output}'
+
+# Sort passed alignments
+rule sort_merged_bam:
+    input:
+        config['out_prefix'] + '.filtered.bam',
+    output:
+        bam = temp(config['out_prefix'] + '.filtered.sorted.bam'),
+        bai = temp(config['out_prefix'] + '.filtered.sorted.bai')
+    shell:
+        'picard SortSam -I {input} -O {output.bam} -SO coordinate '
+        '--CREATE_INDEX true'
+
+# Remove duplicate alignments randomly so as not to favour a specific allele
+rule randomly_remove_duplicates:
+    input:
+        bam = config['out_prefix'] + '.filtered.sorted.bam',
+        bai = config['out_prefix'] + '.filtered.sorted.bai'
+    output:
+        bam = config['out_prefix'] + '.filtered.rmdup.bam',
+        bai = config['out_prefix'] + '.filtered.rmdup.bai',
+        log = config['out_prefix'] + '.filtered.rmdup.log'
+    shell:
+        'picard MarkDuplicates -I {input.bam} -M {output.log} -O {output.bam} '
+        '--ASSUME_SORTED --DUPLICATE_SCORING_STRATEGY RANDOM '
+        '--REMOVE_DUPLICATES true --CREATE_INDEX true'
+
+# Get variant counts from filtered and deduplicated BAM file
+rule get_variant_counts:
+    input:
+        bam = config['out_prefix'] + '.filtered.rmdup.bam',
+        bai = config['out_prefix'] + '.filtered.rmdup.bai',
+        vcf = config['vcf']
+    output:
+        config['out_prefix'] + '.variant_counts.txt'
+    params:
+        script = config['wasp'] + '/get_as_counts.py',
+        paired = lambda wildcards, pair=pair: '--paired_end' if pair else ''
+    shell:
+        'python {params[script]} {params[paired]} {input.bam} {input.vcf} '
+        '{output}'
