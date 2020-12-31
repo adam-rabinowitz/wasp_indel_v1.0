@@ -1,0 +1,16 @@
+# Path to directory containing WASP mapping scripts
+wasp: "/Users/rabinowi/wasp/WASP/mapping"
+# List of FASTQ files. One file for single end. Two for paired end
+fastq:
+    - "/Users/rabinowi/wasp/test_data/fastq/399_1012h_bin_rep1.1.fq.gz"
+    #- "/Users/rabinowi/wasp/test_data/fastq/399_1012h_bin_rep1.2.fq.gz"
+# Genome fasta file. Should be indexed with BWA  
+fasta: "/Users/rabinowi/wasp/test_data/genome/dm6.fa"
+# Read group string to add to alignment file
+read_group: "@RG\\tID:1\\tSM:399_1012h_bin\\tPL:ILLUMINA\\tLB:1"
+# A sorted, tabix indexed, VCF file containing variants
+vcf: "/Users/rabinowi/wasp/test_data/variants/F1_haplotype_joint_call_GATK_stringent.vcf.gz"
+# Prefix of outout files
+out_prefix: "/Users/rabinowi/wasp/test_data/single_end"
+# Allowed difference between position of original and alternative reads
+wobble: 0
