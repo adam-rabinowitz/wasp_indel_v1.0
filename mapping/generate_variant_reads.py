@@ -6,7 +6,7 @@ import pysam
 import sys
 import os
 import util
-import vartable
+import vartree
 
 
 class DataFiles(object):
@@ -365,13 +365,13 @@ def variants_overlap(
 
 
 def process_single_read(
-    read, read_stats, files, var_tab, max_seqs, max_vars
+    read, read_stats, files, var_tree, max_seqs, max_vars
 ):
     """Check if a single read overlaps SNPs or indels, and writes
     this read (or generated read pairs) to appropriate output files"""
 
     # check if read overlaps SNPs or indels
-    read_variants = var_tab.get_read_variants(
+    read_variants = var_tree.get_read_variants(
         read=read, partial=True
     )
     # Count reference and alternative allele matches
@@ -411,14 +411,14 @@ def process_single_read(
 
 
 def process_paired_read(
-    read1, read2, read_stats, files, var_tab, max_vars, max_seqs
+    read1, read2, read_stats, files, var_tree, max_vars, max_seqs
 ):
     """Checks if either end of read pair overlaps SNPs or indels
     and writes read pair (or generated read pairs) to appropriate
     output files"""
     # Find variants for each read
     read1_variants, read2_variants, identical_variants = (
-        var_tab.get_paired_read_variants(
+        var_tree.get_paired_read_variants(
             read1=read1, read2=read2, partial=True
         )
     )
@@ -486,7 +486,7 @@ def filter_reads(
     cur_chrom = None
     seen_chrom = set([])
     # Set variables for processing reads
-    var_tab = vartable.VarTable(files.vcf)
+    var_tree = vartree.VarTree(files.vcf)
     read_stats = ReadStats()
     read_pair_cache = {}
     cache_size = 0
@@ -518,7 +518,7 @@ def filter_reads(
             sys.stderr.write(
                 "reading variants for chromosome {}\n".format(cur_chrom)
             )
-            var_tab.read_vcf(cur_chrom)
+            var_tree.read_vcf(cur_chrom)
             sys.stderr.write("processing reads\n")
         # Skip and count secondary reads
         if read.is_secondary:
@@ -557,7 +557,7 @@ def filter_reads(
                 # Process pair
                 process_paired_read(
                     read1=read1, read2=read2, read_stats=read_stats,
-                    files=files, var_tab=var_tab, max_seqs=max_seqs,
+                    files=files, var_tree=var_tree, max_seqs=max_seqs,
                     max_vars=max_vars
                 )
             # Store reads where pair has not been found
@@ -568,8 +568,8 @@ def filter_reads(
         # Process single end reads
         else:
             process_single_read(
-                read=read, read_stats=read_stats, files=files, var_tab=var_tab,
-                max_seqs=max_seqs, max_vars=max_vars
+                read=read, read_stats=read_stats, files=files,
+                var_tree=var_tree, max_seqs=max_seqs, max_vars=max_vars
             )
     # Print size of cache to file
     if len(read_pair_cache) != 0:

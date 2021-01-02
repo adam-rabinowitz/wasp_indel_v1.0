@@ -6,11 +6,14 @@ import re
 import sys
 
 
-class VarTable(object):
+class VarTree(object):
 
     def __init__(self, path):
         # Set path to vcf file
         self.vcf = path
+        # Get vcf chromosomes
+        with pysam.TabixFile(self.vcf) as vcf:
+            self.chromosomes = vcf.contigs
         # Create variant named tuple
         self.variant = collections.namedtuple(
             'variant', ['start', 'end', 'ref', 'alt']
@@ -26,8 +29,7 @@ class VarTable(object):
         self.clear()
 
     def clear(self):
-        self.chromosome = None
-        self.alleles = None
+        self.tree = None
 
     def read_vcf(self, chromosome):
         """read in SNPs and indels from text input file"""
@@ -66,8 +68,7 @@ class VarTable(object):
                 )
                 interval_list.append(interval)
         # Create intervaltree IntervalTree from list of intervals
-        self.chromosome = chromosome
-        self.alleles = intervaltree.IntervalTree(interval_list)
+        self.tree = intervaltree.IntervalTree(interval_list)
 
     def get_overlapping_variants(self, start, end, partial):
         '''Retrieves variants overlapping the specified interval
@@ -94,10 +95,10 @@ class VarTable(object):
             raise TypeError('partial argument must be boolean')
         # include intervals partially contained within interval or...
         if partial:
-            intervals = self.alleles.overlap(start, end)
+            intervals = self.tree.overlap(start, end)
         # exclude intervals partially contained within interval
         else:
-            intervals = self.alleles.envelop(start, end)
+            intervals = self.tree.envelop(start, end)
         # Extract variants, sort and return
         variants = [x.data for x in intervals]
         variants = sorted(variants, key=lambda x: x.start)
