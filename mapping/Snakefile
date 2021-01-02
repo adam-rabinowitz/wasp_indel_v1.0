@@ -144,8 +144,6 @@ rule get_variant_counts:
     output:
         config['out_prefix'] + '.variant_counts.txt'
     params:
-        script = config['wasp'] + '/get_as_counts.py',
-        paired = lambda wildcards, pair=pair: '--paired_end' if pair else ''
+        script = config['wasp'] + '/get_as_counts.py'
     shell:
-        'python {params[script]} {params[paired]} {input.bam} {input.vcf} '
-        '{output}'
+        'python {params[script]} {input.bam} {input.vcf} {output}'
