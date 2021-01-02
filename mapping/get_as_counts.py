@@ -3,26 +3,10 @@ import collections
 import gzip
 import pysam
 import sys
-import vartable
+import vartree
 
 
 def bam_generator(
-    bam, chromosome
-):
-    # Loop through reads on chromosome
-    for read in bam.fetch(chromosome):
-        # Skip unmapped, secondary and supplementary alignments
-        if read.is_unmapped:
-            continue
-        if read.is_secondary:
-            continue
-        if read.is_supplementary:
-            continue
-        # Yield read
-        yield(read)
-
-
-def paired_bam_generator(
     bam, chromosome
 ):
     # Set processing variables
@@ -36,21 +20,25 @@ def paired_bam_generator(
             continue
         if read.is_supplementary:
             continue
-        # Extract read1 and read2 for previously observed reads...
-        query_name = read.query_name
-        if query_name in unpaired:
-            if read.is_read1:
-                read1 = read
-                read2 = unpaired.pop(query_name)
-                assert(read2.is_read2)
-            elif read.is_read2:
-                read2 = read
-                read1 = unpaired.pop(query_name)
-                assert(read1.is_read1)
-            yield(read1, read2)
-        # Or add read to dictionary for new reads
+        # Process paired end reads
+        if read.is_paired:
+            # Return pair if other read has been stored
+            if read.query_name in unpaired:
+                if read.is_read1:
+                    read1 = read
+                    read2 = unpaired.pop(read.query_name)
+                    assert(read2.is_read2)
+                elif read.is_read2:
+                    read2 = read
+                    read1 = unpaired.pop(read.query_name)
+                    assert(read1.is_read1)
+                yield([read1, read2])
+            # Store read if first observed of pair
+            else:
+                unpaired[read.query_name] = read
+        # Return single end reads
         else:
-            unpaired[query_name] = read
+            yield([read])
     # Print warning if unpaired reads remain
     if len(unpaired) > 0:
         sys.stderr.write(
@@ -60,120 +48,95 @@ def paired_bam_generator(
         )
 
 
-def count_chromosome_variants(
-    bam, vcf, chromosome, partial
-):
-    # Create empty counter
-    counter = collections.defaultdict(collections.Counter)
-    # Read in variants
-    var_table = vartable.VarTable(vcf)
-    var_table.read_vcf(chromosome)
-    # Loop through bam file
-    for read in bam_generator(bam, chromosome):
-        # Get read sequence and variants
-        read_sequence = read.query_sequence
-        read_variants = var_table.get_read_variants(read=read, partial=False)
-        # Count alleles
-        for position, variant in read_variants.items():
-            # Generate counter for position
-            variant_tuple = (chromosome, position, variant.ref, variant.alt)
-            # Find if read is variant allele
-            read_allele = read_sequence[variant.start:variant.end]
-            if read_allele == variant.ref:
-                counter[variant_tuple]['ref'] += 1
-            elif read_allele in variant.alt.split(','):
-                counter[variant_tuple]['alt'] += 1
-            else:
-                counter[variant_tuple]['other'] += 1
-    # Return counter
-    return(counter)
-
-
-def count_paired_chromosome_variants(
-    bam, vcf, chromosome, partial
-):
-    # Create empty counter
-    counter = collections.defaultdict(collections.Counter)
-    # Read in variants
-    var_table = vartable.VarTable(vcf)
-    var_table.read_vcf(chromosome)
-    # Loop through bam file
-    for read1, read2 in paired_bam_generator(bam, chromosome):
-        # Get sequence variants and check they agree
-        read1_variants, read2_variants, identical = (
-            var_table.get_paired_read_variants(
-                read1=read1, read2=read2, partial=False
-            )
-        )
-        if not identical:
-            continue
-        # Remove common variants from read2 so as not to count twice
-        common_positions = read1_variants.keys() & read2_variants.keys()
-        for position in common_positions:
-            read2_variants.pop(position)
-        # Get read sequence
-        read1_sequence = read1.query_sequence
-        read2_sequence = read2.query_sequence
-        # Loop through reads in pairs
-        for read_sequence, read_variants in [
-            (read1_sequence, read1_variants), (read2_sequence, read2_variants)
-        ]:
-            # Loop through read variants
-            for position, variant in read_variants.items():
-                # Generate counter for position
-                variant_tuple = (
-                    chromosome, position, variant.ref, variant.alt
-                )
-                # Find if read is variant allele
-                read_allele = read_sequence[variant.start:variant.end]
-                if read_allele == variant.ref:
-                    counter[variant_tuple]['ref'] += 1
-                elif read_allele in variant.alt.split(','):
-                    counter[variant_tuple]['alt'] += 1
-                else:
-                    counter[variant_tuple]['other'] += 1
-    # Return counter
-    return(counter)
-
-
 def write_counts(
     outfile, counter
 ):
     # Extract variants and sort by positions
     variants = list(counter.keys())
     variants = sorted(variants, key=lambda x: x[1])
-    # Set file parameters
+    # Get counts for each variant
     for variant in variants:
         variant_counts = counter[variant]
-        out_line = '{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
-            *variant, variant_counts['ref'], variant_counts['alt'],
+        # Extract data and readjust position
+        chrom, position, ref, alt = variant
+        position += 1
+        # Process alternative alleles and their counts
+        alt_list = alt.split(',')
+        alt_list = [x if x != '' else '*' for x in alt_list]
+        alt = ','.join(alt_list)
+        indv_alt_counts = [variant_counts[i] for i in range(len(alt_list))]
+        # Create output line
+        out_line = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
+            chrom, position, ref, alt, variant_counts['ref'],
+            sum(indv_alt_counts), ','.join(map(str, indv_alt_counts)),
             variant_counts['other']
         )
         outfile.write(out_line)
 
 
-def bam_variant_counts(
-    bam, vcf, outpath, paired, partial
+def count_vcf_variants(
+    bam, vcf, outpath, partial
 ):
-    # Open input files
+    # Open BAM file
     inbam = pysam.AlignmentFile(bam)
+    # Open output file
     if outpath.endswith('.gz'):
         outfile = gzip.open(outpath, 'wt')
     else:
         outfile = open(outpath, 'wt')
-    # Loop through chromosomes
-    for chromosome in inbam.references:
-        # Get counts for each chromosome
-        if paired:
-            counter = count_paired_chromosome_variants(
-                bam=inbam, vcf=vcf, chromosome=chromosome, partial=partial
-            )
-        else:
-            counter = count_chromosome_variants(
-                bam=inbam, vcf=vcf, chromosome=chromosome, partial=partial
-            )
-        # Write count to file
-        write_counts(outfile, counter)
+    # Sequentially read in variants for each chromosome
+    var_tree = vartree.VarTree(vcf)
+    for chromosome in var_tree.chromosomes:
+        var_tree.read_vcf(chromosome)
+        # Create empty counter for chromosome
+        counter_keys = [
+            (chromosome, interval.begin, interval.data.ref, interval.data.alt)
+            for interval in var_tree.tree
+        ]
+        counter = {key: collections.Counter() for key in counter_keys}
+        # Loop through BAM reads for each chromosome
+        for reads in bam_generator(inbam, chromosome):
+            # Extract read sequences
+            read_sequences = [read.query_sequence for read in reads]
+            # Get read variants for single end reads
+            if len(reads) == 1:
+                read_variants = [
+                    var_tree.get_read_variants(read=reads[0], partial=partial)
+                ]
+            # Get read variants for paired end reads
+            if len(reads) == 2:
+                read1_variants, read2_variants, identical = (
+                    var_tree.get_paired_read_variants(
+                        read1=reads[0], read2=reads[1], partial=partial
+                    )
+                )
+                assert(identical)
+                read_variants = [read1_variants, read2_variants]
+            # Loop thorugh reads and alleles
+            for sequence, variants in zip(read_sequences, read_variants):
+                for position, variant in variants.items():
+                    # Generate key for counter
+                    counter_key = (
+                        chromosome, position, variant.ref, variant.alt
+                    )
+                    # Get read allele and process alternativ alleles
+                    read_allele = sequence[variant.start:variant.end]
+                    alt_list = variant.alt.split(',')
+                    # Count matches to refrence
+                    if read_allele == variant.ref:
+                        counter[counter_key]['ref'] += 1
+                    # Count matched to alternative alleles individually
+                    elif read_allele in alt_list:
+                        for i in range(len(alt_list)):
+                            if read_allele == alt_list[i]:
+                                counter[counter_key][i] += 1
+                    # Or count other
+                    else:
+                        counter[counter_key]['other'] += 1
+        # Write counter to file
+        write_counts(outfile=outfile, counter=counter)
+    # Close output file
+    outfile.close()
 
 
 # Run script
@@ -184,15 +147,11 @@ if __name__ == '__main__':
         "counts for variants overlapping reads in a BAM file. For paired end "
         "reads, variants overlapping both read1 and read2 are only counted "
         "once. The input BAM file is expected to only contain properly "
-        "aligned reads. The output text file contains 7 columns: chromosome, "
-        "position, reference allele, alternative allele, reference allele "
-        "count, alternative allele count and other allele count."
-    )
-    parser.add_argument(
-        "--paired_end", action='store_true', default=False,
-        help=(
-            "Indicates that reads are paired-end (default is single)."
-        )
+        "aligned reads. The output text file contains 8 columns: chromosome, "
+        "position, reference allele, comma seperated list of alternative "
+        "alleles, reference allele counts, sum of alternative allele counts, "
+        "comma seperated list on individual alternative allele counts and "
+        "other allele count."
     )
     parser.add_argument(
         "bam", action='store', help=(
@@ -211,7 +170,6 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
     # Generate counts
-    bam_variant_counts(
-        bam=args.bam, vcf=args.vcf, outpath=args.outfile,
-        paired=args.paired_end, partial=False
+    count_vcf_variants(
+        bam=args.bam, vcf=args.vcf, outpath=args.outfile, partial=False
     )
