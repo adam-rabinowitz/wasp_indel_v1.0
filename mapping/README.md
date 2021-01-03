@@ -25,5 +25,4 @@ Things to do:
 
 complete documentation
 create test suite
-add mappping quality filter to snakemake workflow
 think about adding indel realignment
