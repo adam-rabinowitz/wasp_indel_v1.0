@@ -71,31 +71,28 @@ class ReadStats(object):
         self.other_count = 0
         # total number of reads
         self.total_reads = 0
-        # number of reads discarded becaused not mapped
-        self.discard_unmapped = 0
-        # number of reads discarded because not proper pair
-        self.discard_improper_pair = 0
-        # number of reads discarded because mate unmapped
-        self.discard_mate_unmapped = 0
-        # paired reads map to different chromosomes
-        self.discard_different_chromosome = 0
-        # number of reads discarded because overlap an indel
-        self.discard_indel = 0
         # number of reads discarded because secondary match
         self.discard_secondary = 0
         # number of chimeric reads discarded
         self.discard_supplementary = 0
-        # number of reads discarded because of too many overlapping alleles
-        self.discard_excess_alleles = 0
+        # number of reads discarded becaused not mapped
+        self.discard_unmapped = 0
+        # number of reads discarded because mate unmapped
+        self.discard_mate_unmapped = 0
+        # paired reads map to different chromosomes
+        self.discard_different_chromosome = 0
+        # number of reads discarded due to low mapping quality
+        self.discard_low_mapq = 0
+        # number of reads discarded because not proper pair
+        self.discard_improper_pair = 0
         # read encompases overlapping alleles
         self.discard_overlapping_alleles = 0
+        # number of reads discarded because of too many overlapping alleles
+        self.discard_excess_alleles = 0
         # number of reads discarded because too many allelic combinations
         self.discard_excess_reads = 0
         # when read pairs share SNP locations but have different alleles there
         self.discard_discordant_shared_var = 0
-        # reads where we expected to see other pair, but it was missing
-        # possibly due to read-pairs with different names
-        self.discard_missing_pair = 0
         # number of single reads kept
         self.invariant_single = 0
         # number of read pairs kept
@@ -110,17 +107,17 @@ class ReadStats(object):
         counts = (
             "Total reads: {total}\n"
             "Discard reads:\n"
-            "  unmapped: {unmapped}\n"
-            "  mate unmapped: {mate_unampped}\n"
-            "  improper pair: {improper_pair}\n"
-            "  different chromosome: {different_chromosome}\n"
             "  secondary alignment: {secondary}\n"
             "  supplementary alignment: {supplementary}\n"
+            "  unmapped: {unmapped}\n"
+            "  mate unmapped: {mate_unampped}\n"
+            "  different chromosomes: {different_chromosome}\n"
+            "  low mapping quality: {low_mapq}\n"
+            "  improper pair: {improper_pair}\n"
             "  overlapping alleles: {overlapping_alleles}\n"
             "  excess read alleles: {excess_alleles}\n"
             "  excess allelic combinations: {excess_reads}\n"
             "  discordant shared variants: {discordant_shared_var}\n"
-            "  missing pairs: {missing_pair}\n"
             "Invariant reads:\n"
             "  single-end: {invariant_single}\n"
             "  paired: {invariant_pair}\n"
@@ -133,17 +130,17 @@ class ReadStats(object):
             "  other count: {other_count}\n"
         ).format(
             total=self.total_reads,
-            unmapped=self.discard_unmapped,
-            mate_unampped=self.discard_mate_unmapped,
-            improper_pair=self.discard_improper_pair,
-            different_chromosome=self.discard_different_chromosome,
             secondary=self.discard_secondary,
             supplementary=self.discard_supplementary,
-            excess_alleles=self.discard_excess_alleles,
+            unmapped=self.discard_unmapped,
+            mate_unampped=self.discard_mate_unmapped,
+            different_chromosome=self.discard_different_chromosome,
+            low_mapq=self.discard_low_mapq,
+            improper_pair=self.discard_improper_pair,
             overlapping_alleles=self.discard_overlapping_alleles,
+            excess_alleles=self.discard_excess_alleles,
             excess_reads=self.discard_excess_reads,
             discordant_shared_var=self.discard_discordant_shared_var,
-            missing_pair=self.discard_missing_pair,
             invariant_single=self.invariant_single,
             invariant_pair=self.invariant_pair,
             remap_single=self.remap_single,
@@ -374,10 +371,6 @@ def process_single_read(
     read_variants = var_tree.get_read_variants(
         read=read, partial=True
     )
-    # Count reference and alternative allele matches
-    count_ref_alt_matches(
-        read=read, variants=read_variants, read_stats=read_stats
-    )
     # Count and skip overlapping variants
     if variants_overlap(read_variants):
         read_stats.discard_overlapping_alleles += 1
@@ -386,6 +379,10 @@ def process_single_read(
         read_stats.discard_excess_alleles += 1
     # Process passed variants
     else:
+        # Count reference and alternative allele matches
+        count_ref_alt_matches(
+            read=read, variants=read_variants, read_stats=read_stats
+        )
         # Generate new reads
         new_reads = generate_reads(
             sequence=read.query_sequence,
@@ -416,20 +413,12 @@ def process_paired_read(
     """Checks if either end of read pair overlaps SNPs or indels
     and writes read pair (or generated read pairs) to appropriate
     output files"""
-    # Find variants for each read
+    # Find variants for each read and total variant count
     read1_variants, read2_variants, identical_variants = (
         var_tree.get_paired_read_variants(
             read1=read1, read2=read2, partial=True
         )
     )
-    # Count reference and alternative allele matches
-    count_ref_alt_matches(
-        read=read1, variants=read1_variants, read_stats=read_stats
-    )
-    count_ref_alt_matches(
-        read=read2, variants=read2_variants, read_stats=read_stats
-    )
-    # Count total variants
     variant_count = len(read1_variants.keys() | read2_variants.keys())
     # Count and skip mismatched variants
     if not identical_variants:
@@ -445,6 +434,13 @@ def process_paired_read(
         read_stats.discard_excess_reads += 2
     # or process variant reads
     else:
+        # Count reference and alternative allele matches
+        count_ref_alt_matches(
+            read=read1, variants=read1_variants, read_stats=read_stats
+        )
+        count_ref_alt_matches(
+            read=read2, variants=read2_variants, read_stats=read_stats
+        )
         # Generate new reads
         new_read1 = generate_reads(
             sequence=read1.query_sequence, quality=list(read1.query_qualities),
@@ -479,7 +475,7 @@ def process_paired_read(
 
 
 def filter_reads(
-    files, max_seqs, max_vars
+    files, max_seqs, max_vars, min_mapq
 ):
     '''Main function to filter reads within sorted BAM file'''
     # Set variables to process read chromosome
@@ -489,28 +485,39 @@ def filter_reads(
     var_tree = vartree.VarTree(files.vcf)
     read_stats = ReadStats()
     read_pair_cache = {}
-    cache_size = 0
-    # Loop through reads in bam file
+    # Loop through and count read in bam file
     for read in files.in_bam:
         read_stats.total_reads += 1
+        # Skip and count secondary reads
+        if read.is_secondary:
+            read_stats.discard_secondary += 1
+            continue
+        # Skip and count supplementary reads
+        if read.is_supplementary:
+            read_stats.discard_supplementary += 1
+            continue
         # Skip and count unmapped reads
         if read.is_unmapped:
             read_stats.discard_unmapped += 1
             continue
+        # Skip and count unmapped pairs
+        if read.is_paired and read.mate_is_unmapped:
+            read_stats.discard_mate_unmapped += 1
+            continue
+        # Skip reads mapping to different chromosomes
+        if read.is_paired and read.reference_id != read.next_reference_id:
+            read_stats.discard_different_chromosome += 1
+            continue
         # Process reads on a new chromosome
         if read.reference_name != cur_chrom:
-            # Count and discard reads in cache
-            cur_chrom = read.reference_name
+            # Check all pairs have been found
             if len(read_pair_cache) != 0:
-                sys.stderr.write(
-                    "WARNING: failed to find pairs for {} reads on "
-                    "this chromosome\n".format(len(read_pair_cache))
+                raise ValueError(
+                    'unpaired reads for chromosome: {}. '
+                    'Has alignment been filtered?'.format(cur_chrom)
                 )
-                read_stats.discard_missing_pair += len(read_pair_cache)
-            # Reset cache
-            read_pair_cache = {}
-            cache_size = 0
             # Check that input bam file is sorted
+            cur_chrom = read.reference_name
             if cur_chrom in seen_chrom:
                 raise ValueError("BAM file is not sorted")
             seen_chrom.add(cur_chrom)
@@ -520,31 +527,15 @@ def filter_reads(
             )
             var_tree.read_vcf(cur_chrom)
             sys.stderr.write("processing reads\n")
-        # Skip and count secondary reads
-        if read.is_secondary:
-            read_stats.discard_secondary += 1
-            continue
-        # Skip and count supplementary reads
-        if read.is_supplementary:
-            read_stats.discard_supplementary += 1
-            continue
-        # Process paired reads
+        # Find single end or complete pairs
         if read.is_paired:
-            # Skip and count unmapped-mate pairs
-            if read.mate_is_unmapped:
-                read_stats.discard_mate_unmapped += 1
+            # Store unpaired reads and continue to next read
+            if read.query_name not in read_pair_cache:
+                found = None
+                read_pair_cache[read.query_name] = read
                 continue
-            # Skip and count reads mapping to different chromosomes
-            if read.next_reference_name not in (cur_chrom, '='):
-                read_stats.discard_different_chromosome += 1
-                continue
-            # Skip and count improper pairs
-            if not read.is_proper_pair:
-                read_stats.discard_improper_pair += 1
-                continue
-            # Process reads where pair has been found
-            if read.query_name in read_pair_cache:
-                # we already saw prev pair, retrieve from cache
+            # Return pair if other read has been stored
+            else:
                 if read.is_read1:
                     read1 = read
                     read2 = read_pair_cache.pop(read.query_name)
@@ -553,31 +544,37 @@ def filter_reads(
                     read2 = read
                     read1 = read_pair_cache.pop(read.query_name)
                     assert(read1.is_read1)
-                cache_size -= 1
-                # Process pair
-                process_paired_read(
-                    read1=read1, read2=read2, read_stats=read_stats,
-                    files=files, var_tree=var_tree, max_seqs=max_seqs,
-                    max_vars=max_vars
-                )
-            # Store reads where pair has not been found
-            else:
-                # we need to wait for next pair
-                read_pair_cache[read.query_name] = read
-                cache_size += 1
+                found = [read1, read2]
+        else:
+            found = [read]
+        # Count and skip poorly mapped reads
+        if any([read.mapping_quality < min_mapq for read in found]):
+            read_stats.discard_low_mapq += len(found)
+            continue
+        # Process paired end reads
+        if len(found) == 2:
+            # Count and skip improper pairs
+            if not all([read.is_proper_pair for read in found]):
+                read_stats.discard_improper_pair += 2
+                continue
+            # Process paired end reads
+            process_paired_read(
+                read1=found[0], read2=found[1], read_stats=read_stats,
+                files=files, var_tree=var_tree, max_seqs=max_seqs,
+                max_vars=max_vars
+            )
         # Process single end reads
         else:
             process_single_read(
-                read=read, read_stats=read_stats, files=files,
+                read=found[0], read_stats=read_stats, files=files,
                 var_tree=var_tree, max_seqs=max_seqs, max_vars=max_vars
             )
-    # Print size of cache to file
+    # Check all pairs have been found
     if len(read_pair_cache) != 0:
-        sys.stderr.write(
-            "WARNING: failed to find pairs for {} reads on this chromosome "
-            "\n".format(len(read_pair_cache))
+        raise ValueError(
+            'unpaired reads for chromosome: {}. '
+            'Has alignment been filtered?'.format(cur_chrom)
         )
-        read_stats.discard_missing_pair += len(read_pair_cache)
     # Write read stats to file and check vcf
     read_stats.write(files.log)
     read_stats.check_vcf()
@@ -606,7 +603,12 @@ if __name__ == '__main__':
     parser.add_argument(
         "--paired_end", action='store_true', default=False,
         help=(
-            "Indicates that reads are paired-end (default is single)."
+            "Reads are paired-end (default is single)."
+        )
+    )
+    parser.add_argument(
+        "--min_mapq", type=int, default=0, help=(
+            "Minimum read mapping quality (default=0)."
         )
     )
     parser.add_argument(
@@ -639,10 +641,14 @@ if __name__ == '__main__':
         )
     )
     args = parser.parse_args()
+    print(args)
     # Run program
     files = DataFiles(
         bam=args.bam, is_paired=args.paired_end,
         out_prefix=args.out_prefix, vcf=args.vcf
     )
-    filter_reads(files, max_seqs=args.max_seqs, max_vars=args.max_vars)
+    filter_reads(
+        files=files, max_seqs=args.max_seqs, max_vars=args.max_vars,
+        min_mapq=args.min_mapq
+    )
     files.close()

@@ -12,6 +12,8 @@ class ReadStats:
         self.discard_missing_reads = 0
         # number of reads with unmapped alignments
         self.discard_unmapped_reads = 0
+        # number of reads with low mapping quality
+        self.discard_low_mapq = 0
         # number of reads with mismapped original
         self.discard_original_mismapped = 0
         # number of reads with mismapped variants
@@ -25,6 +27,7 @@ class ReadStats:
             "  total: {total}\n"
             "  missing: {missing}\n"
             "  unmapped: {unmapped}\n"
+            "  low mapping quality: {low_mapq}\n"
             "  mismapped original: {original_mismapped}\n"
             "  mismapped variant: {variant_mismapped}\n"
             "  kept reads: {keep}\n"
@@ -32,6 +35,7 @@ class ReadStats:
             total=self.total_reads,
             missing=self.discard_missing_reads,
             unmapped=self.discard_unmapped_reads,
+            low_mapq=self.discard_low_mapq,
             original_mismapped=self.discard_original_mismapped,
             variant_mismapped=self.discard_variant_mismapped,
             keep=self.keep_reads
@@ -92,7 +96,7 @@ def differ(positions, max_diff):
 
 
 def filter_bam_single(
-    inpath, outpath, max_diff=5
+    inpath, outpath, min_mapq, max_diff
 ):
     # Create object to collect read stats
     read_stats = ReadStats()
@@ -106,17 +110,20 @@ def filter_bam_single(
         old_location, expected_reads = reads[0].query_name.split('.')[-3:-1]
         old_location = [int(x) for x in old_location.split('-')]
         expected_reads = int(expected_reads)
-        # Check expected read number
+        # Count and discrad reads with missing alignments
         if len(reads) != expected_reads:
             assert(len(reads) < expected_reads)
             read_stats.discard_missing_reads += 1
             continue
-        # Filter unmapped reads and check number
-        mapped_reads = [read for read in reads if not read.is_unmapped]
-        if len(mapped_reads) < expected_reads:
+        # Count and skip reads with unmapped variants
+        if any([read.is_unmapped for read in reads]):
             read_stats.discard_unmapped_reads += 1
             continue
-        # Check numbers of reads
+        # Count and skip reads with poorly mapped variants
+        if any([read.mapping_quality < min_mapq for read in reads]):
+            read_stats.discard_low_mapq += 1
+            continue
+        # Check read numbers
         expected_read_nos = list(range(expected_reads))
         read_nos = [int(read.query_name.split('.')[-1]) for read in reads]
         assert(read_nos == expected_read_nos)
@@ -151,7 +158,7 @@ def filter_bam_single(
 
 
 def filter_bam_pairs(
-    inpath, outpath, max_diff=5
+    inpath, outpath, min_mapq, max_diff
 ):
     # Create object to collect read stats
     read_stats = ReadStats()
@@ -171,15 +178,18 @@ def filter_bam_pairs(
             assert(len(reads) < expected_reads)
             read_stats.discard_missing_reads += 2
             continue
-        # Filter unmapped reads and check number
-        mapped_reads = [read for read in reads if not read.is_unmapped]
-        if len(mapped_reads) < expected_reads:
+        # Count and skip reads with unmapped variants
+        if any([read.is_unmapped for read in reads]):
             read_stats.discard_unmapped_reads += 2
             continue
+        # Count and skip reads with poorly mapped variants
+        if any([read.mapping_quality < min_mapq for read in reads]):
+            read_stats.discard_low_mapq += 2
+            continue
         # Split reads into read1 and read2
-        read1 = [read for read in mapped_reads if read.is_read1]
-        read2 = [read for read in mapped_reads if read.is_read2]
-        # Check numbers of reads
+        read1 = [read for read in reads if read.is_read1]
+        read2 = [read for read in reads if read.is_read2]
+        # Check read numbers
         expected_read_nos = list(range(expected_pairs))
         read1_nos = [int(read.query_name.split('.')[-1]) for read in read1]
         read2_nos = [int(read.query_name.split('.')[-1]) for read in read2]
@@ -265,6 +275,11 @@ if __name__ == "__main__":
         )
     )
     parser.add_argument(
+        "--min_mapq", type=int, default=0, help=(
+            "Minimum read mapping quality for remapped reads (default=0)."
+        )
+    )
+    parser.add_argument(
         "--wobble", type=int, default=0, help=(
             "Maximum allowed difference between original mapped position "
             "and allele flipped positions (default=0)."
@@ -286,11 +301,13 @@ if __name__ == "__main__":
     out_bam = args.out_prefix + '.consistent.bam'
     if args.paired_end:
         read_stats = filter_bam_pairs(
-            inpath=args.bam, outpath=out_bam, max_diff=args.wobble
+            inpath=args.bam, outpath=out_bam, min_mapq=args.min_mapq,
+            max_diff=args.wobble
         )
     else:
         read_stats = filter_bam_single(
-            inpath=args.bam, outpath=out_bam, max_diff=args.wobble
+            inpath=args.bam, outpath=out_bam, min_mapq=args.min_mapq,
+            max_diff=args.wobble
         )
     # Write readstats to file
     with open(args.out_prefix + '.filter_log.txt', 'wt') as log:

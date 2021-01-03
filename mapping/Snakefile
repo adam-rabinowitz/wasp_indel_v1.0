@@ -55,10 +55,11 @@ rule filter_first_alignment:
     params:
         script = config['wasp'] + '/generate_variant_reads.py',
         prefix = config['out_prefix'],
-        paired = lambda wildcards, pair=pair: '--paired_end' if pair else ''
+        paired = lambda wildcards, pair=pair: '--paired_end' if pair else '',
+        mapq = config['min_mapq']
     shell:
-        "python {params[script]} {params[paired]} {input.bam} {input.vcf} "
-        "{params[prefix]}"
+        "python {params[script]} {params[paired]} --min_mapq {params[mapq]} "
+        "{input.bam} {input.vcf} {params[prefix]}"
 
 # Realign reads along with their allele flipped versions
 rule second_alignment:
@@ -95,10 +96,11 @@ rule filter_second_alignment:
         script = config['wasp'] + '/filter_remapped_reads.py',
         prefix = config['out_prefix'],
         paired = lambda wildcards, pair=pair: '--paired_end' if pair else '',
-        wobble = '--wobble ' + str(config['wobble'])
+        mapq = config['min_mapq'],
+        wobble = config['wobble']
     shell:
-        "python {params[script]} {params[paired]} {params[wobble]} "
-        "{input} {params[prefix]}"
+        'python {params[script]} {params[paired]} --wobble {params[wobble]} '
+        '--min_mapq {params[mapq]} {input} {params[prefix]}'
 
 # Merge all passed alignments
 rule merge_alignments:
