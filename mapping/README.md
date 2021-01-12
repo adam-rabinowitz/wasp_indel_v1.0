@@ -55,13 +55,13 @@ Parse reads in the allele-flipped BAM file using the script
 the original sequence map to the same location as the orginal sequence. Reads
 with inconsistent mapped locations are discarded while the original read of
 consistently mapped alignments are written to a BAM file with the suffix
-'.constant.bam'.
+'.consistent.bam'.
 
 Step 7 & 8:
 -----------
 
-Merge the '.invariant.bam' BAM file from step 3 and the '.constant.bam' BAM file
-from step 6. Coordinate sort the merged BAM file.
+Merge the '.invariant.bam' BAM file from step 3 and the '.consistent.bam' BAM
+file from step 6. Coordinate sort the merged BAM file.
 
 Step 9:
 -------
@@ -74,10 +74,10 @@ in the MarkDuplicates tool from Picard.
 Step 10:
 --------
 
-Generate reference and alternative allele counts from the filtered and
-deduplicated BAM file. When there is more than one alternative allele the sum of
-the alternative allele counts as well as the individual alternative allele
-counts is returned.
+Generate reference, alternative and other allele counts from the filtered and
+deduplicated BAM file using the script 'get_as_counts.py'. The sum of the
+alternative allele counts as well as the individual alternative allele counts
+are reported for each position in the VCF file.
 
 Things to do:
 -------------

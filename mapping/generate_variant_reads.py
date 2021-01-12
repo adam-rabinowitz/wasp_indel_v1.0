@@ -641,7 +641,6 @@ if __name__ == '__main__':
         )
     )
     args = parser.parse_args()
-    print(args)
     # Run program
     files = DataFiles(
         bam=args.bam, is_paired=args.paired_end,
