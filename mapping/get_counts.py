@@ -68,8 +68,8 @@ def write_counts(
         # Create output line
         out_line = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
             chrom, position, ref, alt, variant_counts['ref'],
-            sum(indv_alt_counts), ','.join(map(str, indv_alt_counts)),
-            variant_counts['other']
+            sum(indv_alt_counts), variant_counts['other'],
+            ','.join(map(str, indv_alt_counts)),
         )
         outfile.write(out_line)
 
@@ -148,10 +148,9 @@ if __name__ == '__main__':
         "reads, variants overlapping both read1 and read2 are only counted "
         "once. The input BAM file is expected to only contain properly "
         "aligned reads. The output text file contains 8 columns: chromosome, "
-        "position, reference allele, comma seperated list of alternative "
-        "alleles, reference allele counts, sum of alternative allele counts, "
-        "comma seperated list on individual alternative allele counts and "
-        "other allele count."
+        "position, reference allele, alternative allele(s), reference allele "
+        "count, alternative allele(s) count, other allele(s) count, and comma "
+        "seperated list on individual alternative allele counts."
     )
     parser.add_argument(
         "bam", action='store', help=(
