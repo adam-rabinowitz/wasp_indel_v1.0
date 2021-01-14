@@ -16,7 +16,8 @@ rule all:
         config['out_prefix'] + '.filtered.rmdup.log',
         config['out_prefix'] + '.variant_log.txt',
         config['out_prefix'] + '.filter_log.txt',
-        config['out_prefix'] + '.variant_counts.txt'
+        config['out_prefix'] + '.variant_counts.txt.gz',
+        config['out_prefix'] + '.variant_counts.txt.gz.tbi'
 
 # Align initial fastq reads to the genome
 rule first_alignment:
@@ -72,7 +73,7 @@ rule second_alignment:
         rg = config['read_group'],
         paired = lambda wildcards, pair=pair: '-p' if pair else ''
     shell:
-        'bwa mem -R "{params[rg]}" {params[paired]} {params[fasta]} {input} > '
+        'bwa mem -M -R "{params[rg]}" {params[paired]} {params[fasta]} {input} > '
         '{output}'
 
 # Sort second alignment by read name
@@ -149,3 +150,13 @@ rule get_variant_counts:
         script = config['wasp'] + '/get_as_counts.py'
     shell:
         'python {params[script]} {input.bam} {input.vcf} {output}'
+
+# Index counts
+rule index_counts:
+    input:
+        config['out_prefix'] + '.variant_counts.txt'
+    output:
+        counts = config['out_prefix'] + '.variant_counts.txt.gz',
+        index = config['out_prefix'] + '.variant_counts.txt.gz.tbi'
+    shell:
+        'bgzip -f {input} && tabix -s 1 -b 2 -e 2 {output.counts}'
