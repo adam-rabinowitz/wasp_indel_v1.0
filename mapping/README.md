@@ -22,6 +22,9 @@ sorted BAM file. Can use single-end or paired-end FASTQ files but not a mix of
 the two. The BAM file should not be filtered and is expected to contain all the
 reads from the orginal FASTQ files.
 
+If using BWA for alignment use the -M flag to flag shorter split hits as
+secondary.
+
 Step 3:
 -------
 
@@ -75,9 +78,14 @@ Step 10:
 --------
 
 Generate reference, alternative and other allele counts from the filtered and
-deduplicated BAM file using the script 'get_as_counts.py'. The sum of the
-alternative allele counts as well as the individual alternative allele counts
-are reported for each position in the VCF file.
+deduplicated BAM file using the script 'get_counts.py'. The final column contains
+a comma seperated list for the individual alternative allele counts. Counts are
+reported for each position in the VCF file.
+
+Step 11:
+--------
+
+Bgzip compress and tabix index the count file
 
 Things to do:
 -------------
