@@ -14,5 +14,9 @@ min_mapq: 10
 vcf: "/Users/rabinowi/wasp/test_data/variants/F1_haplotype_joint_call_GATK_stringent.vcf.gz"
 # Prefix of outout files
 out_prefix: "/Users/rabinowi/wasp/test_data/alignments/paired_end"
-# Allowed difference between position of original and alternative reads
+# Allowed difference between position of original and remapped reads
 wobble: 0
+# Sample for which to extract genotype data from VCF
+sample: 'vgn'
+# Size of window around variant for which to collect read counts
+window: 200
