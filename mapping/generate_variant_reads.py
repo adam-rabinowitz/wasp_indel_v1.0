@@ -169,18 +169,13 @@ class ReadStats(object):
 def count_ref_alt_matches(
     read, variants, read_stats
 ):
-    # Extract read sequence
-    sequence = read.query_alignment_sequence
+    # Loop through varaints and extract read allele
     for variant in variants.values():
-        # Count and variants totally absent from read
-        if variant.start == variant.end:
-            read_stats.other_count += 1
-            continue
-        # read sequence
-        ref_sequence = sequence[variant.start:variant.end]
-        if ref_sequence == variant.ref:
+        read_allele = read.query_sequence[variant.start:variant.end]
+        # Count if read allele matches, ref, alt or other
+        if read_allele == variant.ref:
             read_stats.ref_count += 1
-        elif ref_sequence in variant.alt.split(','):
+        elif read_allele in variant.alts:
             read_stats.alt_count += 1
         else:
             read_stats.other_count += 1
@@ -209,12 +204,15 @@ def generate_reads(
             ref_quality = quality[variant.start:variant.end]
         mean_ref_quality = [sum(ref_quality) // len(ref_quality)]
         # Merge possible reference and alternative alleles
-        allele_list = [variant.ref] + variant.alt.split(',')
+        allele_list = [variant.ref] + list(variant.alts)
         for new_allele in allele_list:
             for old_read in current_reads:
                 # Skip identical alleles
                 old_allele = old_read.sequence[variant.start:variant.end]
                 if old_allele == new_allele:
+                    continue
+                # Skip '*' marking deletions spanning variant position
+                if new_allele == '*':
                     continue
                 # Create new sequence and quality
                 new_sequence = (
