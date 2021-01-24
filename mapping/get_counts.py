@@ -1,10 +1,8 @@
 import argparse
 import collections
-import gzip
 import intervaltree
 import pysam
 import random
-import sys
 import vartree
 
 
@@ -67,73 +65,71 @@ class bam_coverage(object):
 class generate_counts(object):
 
     def __init__(
-        self, bam, vcf, outfile, sample, window, paired_end,
-        partial=False
+        self, bam, vcf, sample, window, paired_end, partial
     ):
         # Store input arguments
         self.bam_path = bam
         self.vcf_path = vcf
-        self.outfile_path = outfile
         self.sample = sample
         self.window = window
         self.paired_end = paired_end
         self.partial = partial
-        # Open input and output files
-        self.bam = pysam.AlignmentFile(self.bam_path)
+        # Create VarTree object
         self.vartree = vartree.VarTree(
             path=self.vcf_path, sample=self.sample
         )
-        self.outfile = open(self.outfile_path, 'wt')
-        # Check pairing
-        for read in self.bam.head(100):
+        # Extract data from BAM file
+        with pysam.AlignmentFile(self.bam_path) as bam:
+            # Check pairing
+            for read in bam.head(100):
+                if self.paired_end:
+                    assert(read.is_paired)
+                else:
+                    assert(not read.is_paired)
+            # Get total counts
             if self.paired_end:
-                assert(read.is_paired)
+                self.total = bam.mapped // 2
             else:
-                assert(not read.is_paired)
-        # Get total counts
-        if self.paired_end:
-            self.total = self.bam.mapped // 2
-        else:
-            self.total = self.bam.mapped
+                self.total = bam.mapped
+            # Get chromosome lengths
+            self.chrom_lengths = {}
+            for chrom in bam.references:
+                self.chrom_lengths[chrom] = bam.get_reference_length(chrom)
 
     def bam_generator(self, chromosome):
         # Set processing variables
         unpaired = {}
-        # Loop through reads on chromosome
-        for read in self.bam.fetch(chromosome):
-            # Skip unmapped, secondary and supplementary alignments
-            if read.is_unmapped:
-                continue
-            if read.is_secondary:
-                continue
-            if read.is_supplementary:
-                continue
-            # Process paired end reads
-            if read.is_paired:
-                # Return pair if other read has been stored
-                if read.query_name in unpaired:
-                    if read.is_read1:
-                        read1 = read
-                        read2 = unpaired.pop(read.query_name)
-                        assert(read2.is_read2)
-                    elif read.is_read2:
-                        read2 = read
-                        read1 = unpaired.pop(read.query_name)
-                        assert(read1.is_read1)
-                    yield([read1, read2])
-                # Store read if first observed of pair
+        # Loop thorugh chromosome reads
+        with pysam.AlignmentFile(self.bam_path) as bam:
+            for read in bam.fetch(chromosome):
+                # Skip unmapped, secondary and supplementary alignments
+                if read.is_unmapped:
+                    continue
+                if read.is_secondary:
+                    continue
+                if read.is_supplementary:
+                    continue
+                # Process paired end reads
+                if read.is_paired:
+                    # Return pair if other read has been stored
+                    if read.query_name in unpaired:
+                        if read.is_read1:
+                            read1 = read
+                            read2 = unpaired.pop(read.query_name)
+                            assert(read2.is_read2)
+                        elif read.is_read2:
+                            read2 = read
+                            read1 = unpaired.pop(read.query_name)
+                            assert(read1.is_read1)
+                        yield([read1, read2])
+                    # Store read if first observed of pair
+                    else:
+                        unpaired[read.query_name] = read
+                # Return single end reads
                 else:
-                    unpaired[read.query_name] = read
-            # Return single end reads
-            else:
-                yield([read])
-        # Print warning if unpaired reads remain
-        if len(unpaired) > 0:
-            sys.stderr.write(
-                'WARNING: {} unpaired reads remain for chromsome {}\n'.format(
-                    len(unpaired), chromosome
-                )
-            )
+                    yield([read])
+            # Check that all reads have been processed
+            assert(len(unpaired) == 0)
 
     def get_genotype(self, genotype):
         ''' Function designed for multiple alternative alleles'''
@@ -192,11 +188,11 @@ class generate_counts(object):
 
     def add_window_counts(self, metrics, coverage, chromosome):
         # Get chromosome length
-        chromosome_length = self.bam.get_reference_length(chromosome)
+        chromosome_length = self.chrom_lengths[chromosome]
         # Loop through variants
         for variant_id in metrics.keys():
             # Extract variant data
-            start, ref, alts = variant_id
+            start, ref = variant_id[0:2]
             end = start + len(ref)
             # Get window counts
             window_start = max(start - self.window, 0)
@@ -216,9 +212,7 @@ class generate_counts(object):
         # Return updated metrics
         return(metrics)
 
-    def write_metrics(self, chromosome, metrics, coverage):
-        # Get chromosome length
-        chromosome_length = self.bam.get_reference_length(chromosome)
+    def write_metrics(self, chromosome, metrics, coverage, outfile):
         # Extract variants and sort by positions
         variant_ids = list(metrics.keys())
         variant_ids = sorted(variant_ids, key=lambda x: x[0])
@@ -261,9 +255,9 @@ class generate_counts(object):
                 other_count_window=variant_metrics['other_window'],
                 total_count=self.total
             )
-            self.outfile.write(out_line)
+            outfile.write(out_line)
 
-    def process_chromosome_variants(self, chromosome):
+    def process_chromosome_variants(self, chromosome, outfile):
         # Create coverage object and read vcf
         coverage = bam_coverage()
         self.vartree.read_vcf(chromosome)
@@ -305,12 +299,15 @@ class generate_counts(object):
             )
             # Print metrics to file
             self.write_metrics(
-                chromosome=chromosome, metrics=metrics, coverage=coverage
+                chromosome=chromosome, metrics=metrics, coverage=coverage,
+                outfile=outfile
             )
 
-    def process_all_variants(self):
-        for chromosome in self.vartree.chromosomes:
-            self.process_chromosome_variants(chromosome)
+    def process_all_variants(self, outpath):
+        # Open outfile
+        with open(outpath, 'wt') as outfile:
+            for chromosome in self.vartree.chromosomes:
+                self.process_chromosome_variants(chromosome, outfile)
 
 
 # Run script
@@ -337,8 +334,8 @@ if __name__ == '__main__':
         )
     )
     parser.add_argument(
-        "--outfile", required=True, help=(
-            "Path of output text file."
+        "--outprefix", required=True, help=(
+            "Prefix of output files."
         )
     )
     parser.add_argument(
@@ -357,10 +354,23 @@ if __name__ == '__main__':
         )
     )
     args = parser.parse_args()
+    # Generate output files
+    outfiles = {
+        'initial': args.outprefix + '.variant_counts.txt',
+        'compressed': args.outprefix + '.variant_counts.txt.gz'
+    }
     # Generate counts
     count_generator = generate_counts(
-        bam=args.bam, vcf=args.vcf, outfile=args.outfile,
-        sample=args.sample, paired_end=args.paired_end, window=200,
-        partial=False
+        bam=args.bam, vcf=args.vcf, sample=args.sample,
+        paired_end=args.paired_end, window=200, partial=False
     )
-    count_generator.process_all_variants()
+    count_generator.process_all_variants(outfiles['initial'])
+    # Compress and index file
+    pysam.tabix_compress(
+        filename_in=outfiles['initial'], filename_out=outfiles['compressed'],
+        force=True
+    )
+    pysam.tabix_index(
+        filename=outfiles['compressed'], seq_col=0, start_col=1, end_col=1,
+        force=True
+    )
