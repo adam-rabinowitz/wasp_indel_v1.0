@@ -2,71 +2,79 @@ import collections
 import bisect
 import intervaltree
 import pysam
-import re
 import sys
 
 
 class VarTree(object):
 
-    def __init__(self, path):
-        # Set path to vcf file
-        self.vcf = path
-        # Get vcf chromosomes
-        with pysam.TabixFile(self.vcf) as vcf:
-            self.chromosomes = vcf.contigs
+    def __init__(self, path, sample=None):
+        # Store initial arguments
+        self.path = path
+        self.sample = sample
+        # Get vcf chromosomes and check samples
+        with pysam.VariantFile(self.path) as vcf:
+            self.chromosomes = list(vcf.header.contigs)
+            if self.sample:
+                assert(self.sample in list(vcf.header.samples))
+        # Set current chromosome
+        self.current_chromosome = None
         # Create variant named tuple
         self.variant = collections.namedtuple(
-            'variant', ['start', 'end', 'ref', 'alt']
+            'variant', ['start', 'end', 'ref', 'alts', 'genotype', 'probs']
         )
         # Create allele regx
-        ref_characters = ('A', 'C', 'G', 'T')
-        ref_regx_string = '^(' + '|'.join(ref_characters) + ')+$'
-        self.ref_regx = re.compile(ref_regx_string)
-        alt_characters = ('A', 'C', 'G', 'T', '\\*', ',')
-        alt_regx_string = '^(' + '|'.join(alt_characters) + ')*$'
-        self.alt_regx = re.compile(alt_regx_string)
-        # Clear allele data
-        self.clear()
-
-    def clear(self):
+        self.ref_set = set(['A', 'C', 'G', 'T'])
+        self.alt_set = set(['A', 'C', 'G', 'T', '*'])
+        # Create slot for tree
         self.tree = None
 
     def read_vcf(self, chromosome):
         """read in SNPs and indels from text input file"""
-        # Clear any prexisting alleles
-        self.clear()
-        # Extract intervaltree intervals for chromomosome variants in VCF
+        # Set current chromosome
+        self.current_chromosome = chromosome
+        # Create empty iterator for missing chromosomes or...
+        if chromosome not in self.chromosomes:
+            sys.stderr.write(
+                "WARNING: chromosome {} not in VCF header\n".format(
+                    chromosome
+                )
+            )
+            vcf = None
+            chrom_iter = []
+        # Create iterator without sample data or...
+        elif self.sample is None:
+            vcf = pysam.VariantFile(self.path, drop_samples=True)
+            chrom_iter = vcf.fetch(contig=chromosome)
+        # Create iterator for samples
+        else:
+            vcf = pysam.VariantFile(self.path, drop_samples=False)
+            vcf.subset_samples([self.sample])
+            chrom_iter = vcf.fetch(contig=chromosome)
+        # Read file and create list of intervaltree Intervals
         interval_list = []
-        with pysam.TabixFile(self.vcf) as vcf:
-            # Create iterator for chromosome variants
-            try:
-                vcf_iterator = vcf.fetch(chromosome)
-            except ValueError:
-                sys.stderr.write(
-                    "WARNING: cannot find chromosome {} in VCF\n".format(
-                        chromosome
-                    )
+        for entry in chrom_iter:
+            # Extract ref and alt alleles and check
+            ref, alts = entry.ref, entry.alts
+            for base in ref:
+                assert(base in self.ref_set)
+            for alt in alts:
+                for base in alt:
+                    assert(base in self.alt_set)
+            # Get genotype
+            if self.sample:
+                genotype = entry.samples[self.sample]['GT']
+                probs = entry.samples[self.sample]['PL']
+            else:
+                genotype = None
+                probs = None
+            # Create intervaltree interval and add to list
+            interval = intervaltree.Interval(
+                entry.start, entry.stop, self.variant(
+                    start=entry.start, end=entry.stop, ref=ref, alts=alts,
+                    genotype=genotype, probs=probs
                 )
-                vcf_iterator = []
-            # Read file and create list of intervaltree Intervals
-            for line in vcf_iterator:
-                # Extract variant data from line
-                line_data = line.strip().split('\t')
-                start = int(line_data[1])
-                ref, alt = line_data[3:5]
-                # Check position and alleles
-                assert(start > 0)
-                assert(self.ref_regx.match(ref) is not None)
-                assert(self.alt_regx.match(alt) is not None)
-                # Process position and allele
-                start = int(start) - 1
-                alt = alt.replace("*", "")
-                end = start + len(ref)
-                # Create intervaltree interval and add to list
-                interval = intervaltree.Interval(
-                    start, end, self.variant(start, end, ref, alt)
-                )
-                interval_list.append(interval)
+            )
+            interval_list.append(interval)
         # Create intervaltree IntervalTree from list of intervals
         self.tree = intervaltree.IntervalTree(interval_list)
 
