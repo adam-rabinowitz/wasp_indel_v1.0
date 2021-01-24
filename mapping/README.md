@@ -77,18 +77,9 @@ in the MarkDuplicates tool from Picard.
 Step 10:
 --------
 
-Generate reference, alternative and other allele counts from the filtered and
-deduplicated BAM file using the script 'get_counts.py'. The final column contains
-a comma seperated list for the individual alternative allele counts. Counts are
-reported for each position in the VCF file.
-
-Step 11:
---------
-
-Bgzip compress and tabix index the count file
-
-Things to do:
--------------
+Generate variant metrics from the filtered and deduplicated BAM file using the
+script 'get_counts.py'. The count metrics file is bgzip compressed and tabix
+indexed
 
 complete documentation
 create test suite
