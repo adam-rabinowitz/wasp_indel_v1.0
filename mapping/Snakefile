@@ -145,18 +145,15 @@ rule get_variant_counts:
         bai = config['out_prefix'] + '.filtered.rmdup.bai',
         vcf = config['vcf']
     output:
-        config['out_prefix'] + '.variant_counts.txt'
-    params:
-        script = config['wasp'] + '/get_counts.py'
-    shell:
-        'python {params[script]} {input.bam} {input.vcf} {output}'
-
-# Index counts
-rule index_counts:
-    input:
-        config['out_prefix'] + '.variant_counts.txt'
-    output:
         counts = config['out_prefix'] + '.variant_counts.txt.gz',
         index = config['out_prefix'] + '.variant_counts.txt.gz.tbi'
+    params:
+        script = config['wasp'] + '/get_counts.py',
+        prefix = config['out_prefix'],
+        sample = config['sample'],
+        window = config['window'],
+        paired = lambda wildcards, pair=pair: '--paired_end' if pair else '',
     shell:
-        'bgzip -f {input} && tabix -s 1 -b 2 -e 3 {output.counts}'
+        'python {params[script]} {params[paired]} --bam {input.bam} '
+        '--vcf {input.vcf} --outprefix {params[prefix]} '
+        '--sample {params[sample]} --window {params[window]}'
