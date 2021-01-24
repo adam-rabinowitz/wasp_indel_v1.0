@@ -147,7 +147,7 @@ rule get_variant_counts:
     output:
         config['out_prefix'] + '.variant_counts.txt'
     params:
-        script = config['wasp'] + '/get_as_counts.py'
+        script = config['wasp'] + '/get_counts.py'
     shell:
         'python {params[script]} {input.bam} {input.vcf} {output}'
 
@@ -159,4 +159,4 @@ rule index_counts:
         counts = config['out_prefix'] + '.variant_counts.txt.gz',
         index = config['out_prefix'] + '.variant_counts.txt.gz.tbi'
     shell:
-        'bgzip -f {input} && tabix -s 1 -b 2 -e 2 {output.counts}'
+        'bgzip -f {input} && tabix -s 1 -b 2 -e 3 {output.counts}'
