@@ -85,6 +85,8 @@ class ReadStats(object):
         self.discard_low_mapq = 0
         # number of reads discarded because not proper pair
         self.discard_improper_pair = 0
+        # number of reads with abnormal alignments
+        self.discard_abnormal_alignment = 0
         # read encompases overlapping alleles
         self.discard_overlapping_alleles = 0
         # number of reads discarded because of too many overlapping alleles
@@ -114,6 +116,7 @@ class ReadStats(object):
             "  different chromosomes: {different_chromosome}\n"
             "  low mapping quality: {low_mapq}\n"
             "  improper pair: {improper_pair}\n"
+            "  abnormal alignment: {abnornmal_alignment}\n"
             "  overlapping alleles: {overlapping_alleles}\n"
             "  excess read alleles: {excess_alleles}\n"
             "  excess allelic combinations: {excess_reads}\n"
@@ -137,6 +140,7 @@ class ReadStats(object):
             different_chromosome=self.discard_different_chromosome,
             low_mapq=self.discard_low_mapq,
             improper_pair=self.discard_improper_pair,
+            abnornmal_alignment=self.discard_abnormal_alignment,
             overlapping_alleles=self.discard_overlapping_alleles,
             excess_alleles=self.discard_excess_alleles,
             excess_reads=self.discard_excess_reads,
@@ -364,11 +368,18 @@ def process_single_read(
 ):
     """Check if a single read overlaps SNPs or indels, and writes
     this read (or generated read pairs) to appropriate output files"""
-
-    # check if read overlaps SNPs or indels
-    read_variants = var_tree.get_read_variants(
-        read=read, partial=True
-    )
+    # check if read overlaps variants
+    try:
+        read_variants = var_tree.get_read_variants(read=read, partial=True)
+    except AssertionError:
+        read_variants = None
+    # Count and skip abnormal reads
+    if read_variants is None:
+        read_stats.discard_abnormal_read += 1
+    # Keep reads without variants
+    elif len(read_variants) == 0:
+        files.invariant_bam.write(read)
+        read_stats.invariant_single += 1
     # Count and skip overlapping variants
     if variants_overlap(read_variants):
         read_stats.discard_overlapping_alleles += 1
@@ -387,22 +398,15 @@ def process_single_read(
             quality=list(read.query_qualities),
             variants=read_variants
         )
-        # Process reads where no variant sequences were generated
-        if len(new_reads) == 1:
-            # neither read overlapped SNPs or indels
-            files.invariant_bam.write(read)
-            read_stats.invariant_single += 1
-        # Process reads where variant sequence were generated
+        # Skip reads with too many variants
+        if len(new_reads) > max_seqs:
+            read_stats.discard_excess_reads += 1
+        # Write passed pairs to file
         else:
-            # Skip reads with too many variants
-            if len(new_reads) > max_seqs:
-                read_stats.discard_excess_reads += 1
-            # Write passed pairs to file
-            else:
-                write_fastq(
-                    fastq=files.remap_fastq, read=read, new_reads=new_reads
-                )
-                read_stats.remap_single += 1
+            write_fastq(
+                fastq=files.remap_fastq, read=read, new_reads=new_reads
+            )
+            read_stats.remap_single += 1
 
 
 def process_paired_read(
@@ -412,14 +416,25 @@ def process_paired_read(
     and writes read pair (or generated read pairs) to appropriate
     output files"""
     # Find variants for each read and total variant count
-    read1_variants, read2_variants, identical_variants = (
-        var_tree.get_paired_read_variants(
-            read1=read1, read2=read2, partial=True
+    try:
+        read1_variants, read2_variants, identical_variants = (
+            var_tree.get_paired_read_variants(
+                read1=read1, read2=read2, partial=True
+            )
         )
-    )
-    variant_count = len(read1_variants.keys() | read2_variants.keys())
+        variant_count = len(read1_variants.keys() | read2_variants.keys())
+    except AssertionError:
+        variant_count = None
+    # Count and skip abnormal reads
+    if variant_count is None:
+        read_stats.discard_abnormal_read += 2
+    # Keep reads without variants
+    elif variant_count == 0:
+        files.invariant_bam.write(read1)
+        files.invariant_bam.write(read2)
+        read_stats.invariant_pair += 2
     # Count and skip mismatched variants
-    if not identical_variants:
+    elif not identical_variants:
         read_stats.discard_discordant_shared_var += 2
     # Count and skip overlapping variants
     elif variants_overlap(read1_variants) or variants_overlap(read2_variants):
@@ -448,28 +463,20 @@ def process_paired_read(
             sequence=read2.query_sequence, quality=list(read2.query_qualities),
             variants=read2_variants
         )
-        # Process reads where no variant sequences were generated
-        if len(new_read1) == 1 and len(new_read2) == 1:
-            # neither read overlapped SNPs or indels
-            files.invariant_bam.write(read1)
-            files.invariant_bam.write(read2)
-            read_stats.invariant_pair += 2
-        # Process reads where variant sequence were generated
+        # Get all paired combinations of reads
+        new_pairs = read_pair_combos(
+            read1_list=new_read1, read2_list=new_read2, max_seqs=max_seqs
+        )
+        # Discard excess pairs
+        if len(new_pairs) > max_seqs:
+            read_stats.discard_excess_reads += 2
+        # Write passed pairs to file
         else:
-            # Get all paired combinations of reads
-            new_pairs = read_pair_combos(
-                read1_list=new_read1, read2_list=new_read2, max_seqs=max_seqs
+            write_pair_fastq(
+                fastq=files.remap_fastq, read1=read1, read2=read2,
+                new_pairs=new_pairs
             )
-            # Discard excess pairs
-            if len(new_pairs) > max_seqs:
-                read_stats.discard_excess_reads += 2
-            # Write passed pairs to file
-            else:
-                write_pair_fastq(
-                    fastq=files.remap_fastq, read1=read1, read2=read2,
-                    new_pairs=new_pairs
-                )
-                read_stats.remap_pair += 2
+            read_stats.remap_pair += 2
 
 
 def filter_reads(
