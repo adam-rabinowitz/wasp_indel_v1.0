@@ -6,7 +6,7 @@ import random
 import vartree
 
 
-class bam_coverage(object):
+class BamCoverage(object):
 
     def __init__(self, seed=42):
         # Initialise trees
@@ -62,7 +62,7 @@ class bam_coverage(object):
         return(count_tuple)
 
 
-class generate_counts(object):
+class GenerateCounts(object):
 
     def __init__(
         self, bam, vcf, sample, window, paired_end, partial
@@ -131,24 +131,24 @@ class generate_counts(object):
             # Check that all reads have been processed
             assert(len(unpaired) == 0)
 
-    def get_genotype(self, genotype):
+    def get_genotype_probs(self, phred_probs, n_alt):
         ''' Function designed for multiple alternative alleles'''
-        # Set all alternative alleles to 1 and return
-        genotype = tuple(
-            [None if g is None else min(g, 1) for g in genotype]
-        )
-        return(genotype)
-
-    def get_het_prob(self, phred_probs, n_alt):
-        ''' Function designed for multiple alternative alleles'''
-        if None in phred_probs:
-            prob_het = None
-        else:
-            het_indices = [int(i * ((i + 1) / 2)) for i in range(1, 1 + n_alt)]
-            phred_prob_hets = [phred_probs[i] for i in het_indices]
-            prob_het = sum([10 ** ((-x) / 10) for x in phred_prob_hets])
-            prob_het = min(1, prob_het)
-        return(prob_het)
+        # Check length of supplied probabilities
+        n_prob = sum(range(1, n_alt + 2))
+        assert(len(phred_probs) == n_prob)
+        # Get probabilities and adjust to sum to zero
+        probs = [10 ** ((-p) / 10) for p in phred_probs]
+        norm_probs = [p / sum(probs) for p in probs]
+        # Get indices for ref, het and alt genotypes
+        het_indices = [int(i * ((i + 1) / 2)) for i in range(1, n_alt + 1)]
+        alt_indices = [i for i in range(1, n_prob) if i not in het_indices]
+        # Calculate probabilities and return
+        genotype_probs = {
+            'ref': norm_probs[0],
+            'het': sum([norm_probs[i] for i in het_indices]),
+            'alt': sum([norm_probs[i] for i in alt_indices])
+        }
+        return(genotype_probs)
 
     def get_read_variants(
         self, read_list
@@ -182,8 +182,8 @@ class generate_counts(object):
                 else:
                     allele = 'other'
                 # Get variant id
-                variant_id = (position, variant.ref, variant.alts)
-                read_variants[variant_id] = allele
+                variant_key = (position, variant.ref, variant.alts)
+                read_variants[variant_key] = allele
         return(read_variants)
 
     def add_window_counts(self, metrics, coverage, chromosome):
@@ -221,77 +221,95 @@ class generate_counts(object):
             variant_metrics = metrics[variant_id]
             # Get variant id metrics
             start, ref, alts = variant_id
-            end = start + len(ref)
             alts = ','.join(alts)
-            # Process genotype and probabilities
-            genotype = '/'.join(map(str, variant_metrics['genotype']))
+            # Process genotype
+            genotype = '|'.join(map(str, variant_metrics['genotype']))
             genotype = genotype.replace('None', '.')
-            if variant_metrics['hetprob'] is None:
-                hetprob = '.'
-            else:
-                hetprob = '{:.2f}'.format(variant_metrics['hetprob'])
+            # Process probabilites
+            for prob in ('refprob', 'hetprob', 'altprob'):
+                if variant_metrics[prob] is None:
+                    variant_metrics[prob] = '.'
+                else:
+                    variant_metrics[prob] = '{:.4f}'.format(
+                        variant_metrics[prob]
+                    )
             # Create output line
             out_line = (
-                '{chromosome}\t{start}\t{end}\t{window_start}\t{window_end}\t'
-                '{ref}\t{alts}\t{sample}\t{genotype}\t{hetprob}\t'
+                '{chromosome}\t{start}\t{id}\t{ref}\t{alts}\t{window_start}\t'
+                '{window_end}\t{genotype}\t{refprob}\t{hetprob}\t{altprob}\t'
                 '{ref_count}\t{alt_count}\t{other_count}\t{ref_count_window}\t'
-                '{alt_count_window}\t{other_count_window}\t{total_count}\n'
+                '{alt_count_window}\t{other_count_window}\n'
             ).format(
                 chromosome=chromosome,
                 start=start + 1,
-                end=end,
+                id=variant_metrics['id'],
                 window_start=variant_metrics['window_start'] + 1,
                 window_end=variant_metrics['window_end'],
                 ref=ref,
                 alts=alts,
-                sample=self.sample,
                 genotype=genotype,
-                hetprob=hetprob,
+                refprob=variant_metrics['refprob'],
+                hetprob=variant_metrics['hetprob'],
+                altprob=variant_metrics['altprob'],
                 ref_count=variant_metrics['ref'],
                 alt_count=variant_metrics['alt'],
                 other_count=variant_metrics['other'],
                 ref_count_window=variant_metrics['ref_window'],
                 alt_count_window=variant_metrics['alt_window'],
-                other_count_window=variant_metrics['other_window'],
-                total_count=self.total
+                other_count_window=variant_metrics['other_window']
             )
             outfile.write(out_line)
 
     def process_chromosome_variants(self, chromosome, outfile):
         # Create coverage object and read vcf
-        coverage = bam_coverage()
+        coverage = BamCoverage()
         self.vartree.read_vcf(chromosome)
         # Populate metrics dictionary with default values
         metrics = {}
         for interval in self.vartree.tree:
-            # Process genotype and probabilites
-            genotype = self.get_genotype(interval.data.genotype)
-            hetprob = self.get_het_prob(
-                interval.data.probs, len(interval.data.alts)
-            )
-            # Generate key for variant
-            variant_id = (
+            # Set values for missing genotypes and probabilities
+            if None in interval.data.gt or None in interval.data.pl:
+                genotype = tuple([None] * len(interval.data.gt))
+                genotype_probs = {'ref': None, 'het': None, 'alt': None}
+            # or extract values from data
+            else:
+                genotype = [min(x, 1) for x in interval.data.gt]
+                genotype_probs = self.get_genotype_probs(
+                    phred_probs=interval.data.pl, n_alt=len(interval.data.alts)
+                )
+            # Get variant id
+            if interval.data.id is not None:
+                variant_id = interval.data.id
+            else:
+                variant_id = '{}_{}_{}_{}'.format(
+                    chromosome, interval.begin, interval.data.ref,
+                    '_'.join(interval.data.alts)
+                )
+            # Generate key for metrics dictionary
+            variant_key = (
                 interval.begin, interval.data.ref, interval.data.alts
             )
             # Add variant to dictionary
-            metrics[variant_id] = {
-                'ref': 0, 'alt': 0, 'other': 0, 'genotype': genotype,
-                'hetprob': hetprob
+            metrics[variant_key] = {
+                'id': variant_id, 'ref': 0, 'alt': 0, 'other': 0,
+                'genotype': genotype, 'refprob': genotype_probs['ref'],
+                'hetprob': genotype_probs['het'],
+                'altprob': genotype_probs['alt']
             }
         # Get variant metrics
         if len(metrics) > 0:
             for read_list in self.bam_generator(chromosome):
                 # Extract read variants and their associayed metrics
                 read_variants = self.get_read_variants(read_list=read_list)
-                variant_ids = list(read_variants.keys())
-                alleles = [read_variants[i] for i in variant_ids]
-                genotypes = [metrics[i]['genotype'] for i in variant_ids]
+                variant_keys = list(read_variants.keys())
+                read_alleles = [read_variants[k] for k in variant_keys]
+                genotypes = [metrics[k]['genotype'] for k in variant_keys]
                 # Add allele counts
-                for variant_id, allele in zip(variant_ids, alleles):
-                    metrics[variant_id][allele] += 1
+                for key, allele in zip(variant_keys, read_alleles):
+                    metrics[key][allele] += 1
                 # Add coverage
                 coverage.add_reads(
-                    reads=read_list, genotypes=genotypes, alleles=alleles
+                    reads=read_list, genotypes=genotypes, alleles=read_alleles
                 )
             # Add window counts to metrics
             metrics = self.add_window_counts(
@@ -360,7 +378,7 @@ if __name__ == '__main__':
         'compressed': args.outprefix + '.variant_counts.txt.gz'
     }
     # Generate counts
-    count_generator = generate_counts(
+    count_generator = GenerateCounts(
         bam=args.bam, vcf=args.vcf, sample=args.sample,
         paired_end=args.paired_end, window=200, partial=False
     )
