@@ -8,4 +8,3 @@ dependencies:
     - pysam=0.15.3
     - python=3.6.12
     - snakemake=3.13.3
-    - tabix=0.2.5
