@@ -20,7 +20,8 @@ class VarTree(object):
         self.current_chromosome = None
         # Create variant named tuple
         self.variant = collections.namedtuple(
-            'variant', ['start', 'end', 'ref', 'alts', 'genotype', 'probs']
+            'variant',
+            ['start', 'end', 'ref', 'alts', 'genotype', 'probs', 'id']
         )
         # Create allele regx
         self.ref_set = set(['A', 'C', 'G', 'T'])
@@ -71,7 +72,7 @@ class VarTree(object):
             interval = intervaltree.Interval(
                 entry.start, entry.stop, self.variant(
                     start=entry.start, end=entry.stop, ref=ref, alts=alts,
-                    genotype=genotype, probs=probs
+                    genotype=genotype, probs=probs, id=entry.id
                 )
             )
             interval_list.append(interval)
