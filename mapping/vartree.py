@@ -21,7 +21,7 @@ class VarTree(object):
         # Create variant named tuple
         self.variant = collections.namedtuple(
             'variant',
-            ['start', 'end', 'ref', 'alts', 'genotype', 'probs', 'id']
+            ['start', 'end', 'ref', 'alts', 'id', 'gt', 'gq', 'pl']
         )
         # Create allele regx
         self.ref_set = set(['A', 'C', 'G', 'T'])
@@ -63,16 +63,16 @@ class VarTree(object):
                     assert(base in self.alt_set)
             # Get genotype
             if self.sample:
-                genotype = entry.samples[self.sample]['GT']
-                probs = entry.samples[self.sample]['PL']
+                gt = entry.samples[self.sample]['GT']
+                gq = entry.samples[self.sample]['GQ']
+                pl = entry.samples[self.sample]['PL']
             else:
-                genotype = None
-                probs = None
+                gt, gq, pl = None, None, None
             # Create intervaltree interval and add to list
             interval = intervaltree.Interval(
                 entry.start, entry.stop, self.variant(
                     start=entry.start, end=entry.stop, ref=ref, alts=alts,
-                    genotype=genotype, probs=probs, id=entry.id
+                    id=entry.id, gt=gt, gq=gq, pl=pl
                 )
             )
             interval_list.append(interval)
