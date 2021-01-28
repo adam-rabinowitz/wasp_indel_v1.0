@@ -375,7 +375,7 @@ def process_single_read(
         read_variants = None
     # Count and skip abnormal reads
     if read_variants is None:
-        read_stats.discard_abnormal_read += 1
+        read_stats.discard_abnormal_alignment += 1
     # Keep reads without variants
     elif len(read_variants) == 0:
         files.invariant_bam.write(read)
@@ -427,7 +427,7 @@ def process_paired_read(
         variant_count = None
     # Count and skip abnormal reads
     if variant_count is None:
-        read_stats.discard_abnormal_read += 2
+        read_stats.discard_abnormal_alignment += 2
     # Keep reads without variants
     elif variant_count == 0:
         files.invariant_bam.write(read1)
