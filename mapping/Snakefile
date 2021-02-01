@@ -15,9 +15,7 @@ rule all:
         config['out_prefix'] + '.filtered.rmdup.bai',
         config['out_prefix'] + '.filtered.rmdup.log',
         config['out_prefix'] + '.variant_log.txt',
-        config['out_prefix'] + '.filter_log.txt',
-        config['out_prefix'] + '.variant_counts.txt.gz',
-        config['out_prefix'] + '.variant_counts.txt.gz.tbi'
+        config['out_prefix'] + '.filter_log.txt'
 
 # Align initial fastq reads to the genome
 rule first_alignment:
@@ -56,11 +54,10 @@ rule filter_first_alignment:
     params:
         script = config['wasp'] + '/generate_variant_reads.py',
         prefix = config['out_prefix'],
-        paired = lambda wildcards, pair=pair: '--paired_end' if pair else '',
         mapq = config['min_mapq']
     shell:
-        "python {params[script]} {params[paired]} --min_mapq {params[mapq]} "
-        "{input.bam} {input.vcf} {params[prefix]}"
+        "python {params[script]} --min_mapq {params[mapq]} --bam {input.bam} "
+        "--vcf {input.vcf} --out_prefix {params[prefix]}"
 
 # Realign reads along with their allele flipped versions
 rule second_alignment:
@@ -138,22 +135,3 @@ rule randomly_remove_duplicates:
         '--ASSUME_SORTED --DUPLICATE_SCORING_STRATEGY RANDOM '
         '--REMOVE_DUPLICATES true --CREATE_INDEX true'
 
-# Get variant counts from filtered and deduplicated BAM file
-rule get_variant_counts:
-    input:
-        bam = config['out_prefix'] + '.filtered.rmdup.bam',
-        bai = config['out_prefix'] + '.filtered.rmdup.bai',
-        vcf = config['vcf']
-    output:
-        counts = config['out_prefix'] + '.variant_counts.txt.gz',
-        index = config['out_prefix'] + '.variant_counts.txt.gz.tbi'
-    params:
-        script = config['wasp'] + '/get_counts.py',
-        prefix = config['out_prefix'],
-        sample = config['sample'],
-        window = config['window'],
-        paired = lambda wildcards, pair=pair: '--paired_end' if pair else '',
-    shell:
-        'python {params[script]} {params[paired]} --bam {input.bam} '
-        '--vcf {input.vcf} --outprefix {params[prefix]} '
-        '--sample {params[sample]} --window {params[window]}'
