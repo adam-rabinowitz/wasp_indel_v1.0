@@ -21,7 +21,7 @@ class VarTree(object):
         # Create variant named tuple
         self.variant = collections.namedtuple(
             'variant',
-            ['start', 'end', 'ref', 'alts', 'id', 'gt', 'gq', 'pl']
+            ['start', 'end', 'alleles', 'id', 'gt', 'gq', 'pl']
         )
         # Create allele regx
         self.ref_set = set(['A', 'C', 'G', 'T'])
@@ -54,13 +54,13 @@ class VarTree(object):
         # Read file and create list of intervaltree Intervals
         interval_list = []
         for entry in chrom_iter:
-            # Extract ref and alt alleles and check
-            ref, alts = entry.ref, entry.alts
-            for base in ref:
-                assert(base in self.ref_set)
-            for alt in alts:
-                for base in alt:
-                    assert(base in self.alt_set)
+            # Extract alleles and check
+            alleles = entry.alleles
+            for ref_base in alleles[0]:
+                assert(ref_base in self.ref_set)
+            for alt in alleles[1:]:
+                for alt_base in alt:
+                    assert(alt_base in self.alt_set)
             # Get genotype
             if self.sample:
                 gt = entry.samples[self.sample]['GT']
@@ -71,7 +71,7 @@ class VarTree(object):
             # Create intervaltree interval and add to list
             interval = intervaltree.Interval(
                 entry.start, entry.stop, self.variant(
-                    start=entry.start, end=entry.stop, ref=ref, alts=alts,
+                    start=entry.start, end=entry.stop, alleles=alleles,
                     id=entry.id, gt=gt, gq=gq, pl=pl
                 )
             )
@@ -211,20 +211,20 @@ class VarTree(object):
         read2_variants = self.get_read_variants(read=read2, partial=partial)
         # Check common variants are identical
         common_variants = read1_variants.keys() & read2_variants.keys()
-        identical_variants = True
+        identical_alleles = True
         for variant_position in common_variants:
             # Get read sequences for each read
             read1_variant = read1_variants[variant_position]
             read2_variant = read2_variants[variant_position]
-            read1_seq = read1.query_sequence[
+            read1_allele = read1.query_sequence[
                 read1_variant.start:read1_variant.end
             ]
-            read2_seq = read2.query_sequence[
+            read2_allele = read2.query_sequence[
                 read2_variant.start:read2_variant.end
             ]
             # Deterimine if the sequences are identical
-            if read1_seq != read2_seq:
-                identical_variants = False
+            if read1_allele != read2_allele:
+                identical_alleles = False
                 break
         # Return variant
-        return(read1_variants, read2_variants, identical_variants)
+        return(read1_variants, read2_variants, identical_alleles)
