@@ -1,8 +1,59 @@
-import collections
 import bisect
+import collections
+import copy
 import intervaltree
 import pysam
 import sys
+
+
+VariantTuple = collections.namedtuple(
+    'VariantTuple', [
+        'chrom', 'start', 'end', 'alleles', 'id', 'gt', 'pl',
+        'read_start', 'read_end', 'read_allele', 'hash'
+    ]
+)
+
+
+class IndividualVariant(VariantTuple):
+
+    def __hash__(
+        self
+    ):
+        return(self.hash)
+
+    def __eq__(
+        self, other
+    ):
+        if self.__class__ == other.__class__ and self.hash == other.hash:
+            return(True)
+        return(False)
+
+    def __ne__(
+        self, other
+    ):
+        return(not self.__eq__(other))
+
+    def is_snv(self):
+        for allele in self.alleles:
+            if len(allele) != 1:
+                return(False)
+        return(True)
+
+    def is_biallelic(self):
+        if len(self.alleles) == 2:
+            return(True)
+        return(False)
+
+    def is_heterozygous(self):
+        if None not in self.gt and len(set(self.gt)) == 2:
+            return(True)
+        return(False)
+
+    def is_biallelic_heterozygous(self):
+        if self.is_biallelic() and self.is_heterozygous():
+            return(True)
+        else:
+            return(False)
 
 
 class VarTree(object):
@@ -18,11 +69,6 @@ class VarTree(object):
                 assert(self.sample in list(vcf.header.samples))
         # Set current chromosome
         self.current_chromosome = None
-        # Create variant named tuple
-        self.variant = collections.namedtuple(
-            'variant',
-            ['start', 'end', 'alleles', 'id', 'gt', 'gq', 'pl']
-        )
         # Create allele regx
         self.ref_set = set(['A', 'C', 'G', 'T'])
         self.alt_set = set(['A', 'C', 'G', 'T', '*'])
@@ -64,22 +110,27 @@ class VarTree(object):
             # Get genotype
             if self.sample:
                 gt = entry.samples[self.sample]['GT']
-                gq = entry.samples[self.sample]['GQ']
                 pl = entry.samples[self.sample]['PL']
             else:
-                gt, gq, pl = None, None, None
+                gt = (None,)
+                pl = (None,)
+            # Get hash
+
             # Create intervaltree interval and add to list
-            interval = intervaltree.Interval(
-                entry.start, entry.stop, self.variant(
-                    start=entry.start, end=entry.stop, alleles=alleles,
-                    id=entry.id, gt=gt, gq=gq, pl=pl
-                )
+            new_variant = IndividualVariant(
+                chrom=chromosome, start=entry.start, end=entry.stop,
+                alleles=alleles, id=entry.id, gt=gt, pl=pl,
+                read_start=None, read_end=None, read_allele=None,
+                hash=hash((chromosome, entry.start, alleles))
             )
-            interval_list.append(interval)
+            new_interval = intervaltree.Interval(
+                entry.start, entry.stop, new_variant
+            )
+            interval_list.append(new_interval)
         # Create intervaltree IntervalTree from list of intervals
         self.tree = intervaltree.IntervalTree(interval_list)
 
-    def get_overlapping_variants(self, start, end, partial):
+    def get_overlapping_variants(self, start, end):
         '''Retrieves variants overlapping the specified interval
 
         Parameters
@@ -88,29 +139,15 @@ class VarTree(object):
             0-based interval start
         end: int
             0-based interval end
-        partial: bool
-            Return variants partially overlapping interval
 
         Returns
         -------
         variants: list
-            A list of collections.namedtuple cotaining the genomic
-            start and end positions of the variant as well as the
-            reference and alternative alleles. List is sorted by
-            variant start position.
+            A list of IndividualVariant object containing variant data
         '''
-        # Check partial argument and either...
-        if not isinstance(partial, bool):
-            raise TypeError('partial argument must be boolean')
         # include intervals partially contained within interval or...
-        if partial:
-            intervals = self.tree.overlap(start, end)
-        # exclude intervals partially contained within interval
-        else:
-            intervals = self.tree.envelop(start, end)
-        # Extract variants, sort and return
+        intervals = self.tree.overlap(start, end)
         variants = [x.data for x in intervals]
-        variants = sorted(variants, key=lambda x: x.start)
         return(variants)
 
     def get_read_variants(
@@ -123,31 +160,37 @@ class VarTree(object):
         read: pysam.AlignedSegment
             An aligned read
         partial: bool
-            Return variants partially overlapping read
+            Return variants partially overlapping read end and start
 
         Returns
         -------
-        read_variants: collections.OrderedDict
-            A dictionary of variants. The key is the 0-based position of
-            the variant within the genome and the value is a named tuple
-            cotaining the start and end positions of the variant within
-            the read as well as the reference and alternative alleles.
-            The dictionary is ordered by genomic position of the variants.
+        read_variants: list
+
         '''
-        # Set output variables
-        read_variants = collections.OrderedDict()
-        # Get variants
-        variants = self.get_overlapping_variants(
-            start=read.reference_start, end=read.reference_end, partial=partial
-        )
-        # Process supplied variants
-        if len(variants) > 0:
+        # Get all variants
+        genomic_variants = set()
+        for start, end in read.get_blocks():
+            for variant in self.get_overlapping_variants(start=start, end=end):
+                genomic_variants.add(variant)
+        # Convert genomic variants into a list and sort
+        genomic_variants = list(genomic_variants)
+        genomic_variants = sorted(genomic_variants, key=lambda x: x.start)
+        # Filter partially overlapping start and end
+        if not partial:
+            genomic_variants = [
+                gv for gv in genomic_variants if
+                gv.start >= read.reference_start and
+                gv.end <= read.reference_end
+            ]
+        # Create read variants from genomic variants
+        read_variants = []
+        if genomic_variants:
             # Extract read data
             positions = read.get_reference_positions(full_length=True)
-            read_start = read.query_alignment_start
-            read_end = read.query_alignment_end
+            read_align_start = read.query_alignment_start
+            read_align_end = read.query_alignment_end
             # Check all bases have assigned positions
-            if None in positions[read_start:read_end]:
+            if None in positions[read_align_start:read_align_end]:
                 # Generate cigar covering aligned segment of read
                 read_cigar = ''.join([
                     str(operation) * length for
@@ -156,75 +199,28 @@ class VarTree(object):
                 ])
                 assert(len(read_cigar) == len(positions))
                 # Assign positions of insertion to previous bases
-                for i in range(read_start, read_end):
+                for i in range(read_align_start, read_align_end):
                     if positions[i] is None:
                         assert(read_cigar[i] == '1')
                         positions[i] = positions[i - 1]
-                assert(None not in positions[read_start:read_end])
-            # Loop through variants
-            for variant in variants:
-                # Get indices within reads
-                start_index = bisect.bisect_left(
-                    positions, variant.start, lo=read_start, hi=read_end
+                assert(None not in positions[read_align_start:read_align_end])
+            # Loop through putative variant end get read variants
+            for variant in genomic_variants:
+                # Add indices of variant within read
+                read_start = bisect.bisect_left(
+                    a=positions, x=variant.start, lo=read_align_start,
+                    hi=read_align_end
                 )
-                end_index = bisect.bisect_left(
-                    positions, variant.end, lo=read_start, hi=read_end
+                read_end = bisect.bisect_left(
+                    a=positions, x=variant.end, lo=read_align_start,
+                    hi=read_align_end
                 )
-                # Store varaints mapped to reads
-                mapped_variant = variant._replace(
-                    start=start_index, end=end_index
+                read_allele = read.query_sequence[read_start:read_end]
+                # Create read variant and store
+                read_variant = variant._replace(
+                    read_start=read_start, read_end=read_end,
+                    read_allele=read_allele
                 )
-                read_variants[variant.start] = mapped_variant
+                read_variants.append(read_variant)
         # Return errors and passed variants
         return(read_variants)
-
-    def get_paired_read_variants(
-        self, read1, read2, partial
-    ):
-        '''Retrieves variants overlapping the supplied read
-
-        Parameters
-        ----------
-        read1: pysam.AlignedSegment
-            First read of an aligned pair
-        read2: pysam.AlignedSegment
-            Second read of an aligned pair
-        partial: bool
-            Return variants partially overlapping reads
-
-        Returns
-        -------
-        read1_variants: collections.OrderedDict
-            A dictionary of variants for read1. The key is the 0-based
-            position of the variant within the genome and the value is a
-            named tuple cotaining the start and end positions of the variant
-            within the read as well as the reference and alternative alleles.
-            The dictionary is ordered by genomic position of the variants.
-        read2_variants: collections.OrderedDict
-            Same as read1_variants but for read2
-        identical_sequence: bool
-            A boolean indicating if the read sequences are identical at
-            variants common to read1 and read2 match.
-        '''
-        # Get variants for the reads
-        read1_variants = self.get_read_variants(read=read1, partial=partial)
-        read2_variants = self.get_read_variants(read=read2, partial=partial)
-        # Check common variants are identical
-        common_variants = read1_variants.keys() & read2_variants.keys()
-        identical_alleles = True
-        for variant_position in common_variants:
-            # Get read sequences for each read
-            read1_variant = read1_variants[variant_position]
-            read2_variant = read2_variants[variant_position]
-            read1_allele = read1.query_sequence[
-                read1_variant.start:read1_variant.end
-            ]
-            read2_allele = read2.query_sequence[
-                read2_variant.start:read2_variant.end
-            ]
-            # Deterimine if the sequences are identical
-            if read1_allele != read2_allele:
-                identical_alleles = False
-                break
-        # Return variant
-        return(read1_variants, read2_variants, identical_alleles)
