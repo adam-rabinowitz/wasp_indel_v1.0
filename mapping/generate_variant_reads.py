@@ -255,9 +255,9 @@ class CreateLog(object):
             '  none: {variants_absent}\n'
             '  unknown: {abnormal_alignment}\n'
             '  biallelic snv: {biallelic_snv}\n'
-            '  biallelic: {biallelic_mnv}\n'
-            '  snv: {multiallelic_snv}\n'
-            '  mixed: {multiallelic_mnv}\n'
+            '  biallelic: {biallelic}\n'
+            '  snv: {snv}\n'
+            '  mixed: {mixed}\n'
         ).format(**variant_counts)
         # Get allele count log
         allele_count_log = (
@@ -302,9 +302,9 @@ class ProcessAlignments(object):
         self.only_snv = only_snv
         self.only_biallelic = only_biallelic
         # Create output paths
-        self.outbam_path = self.out_prefix + '.invariant.bam'
-        self.fastq_path = self.out_prefix + '.remap.fq.gz'
-        self.log_path = self.out_prefix + '.variant_log.txt'
+        self.outbam_path = self.out_prefix + '.no_variants.bam'
+        self.fastq_path = self.out_prefix + '.allele_flipped.fq.gz'
+        self.log_path = self.out_prefix + '.first_alignment_log.txt'
         # Initialise obejcts and open files
         self.bam_generator = BamGenerator(
             self.inbam_path, min_mapq=self.min_mapq
@@ -320,9 +320,9 @@ class ProcessAlignments(object):
             'abnormal_alignment': 0,
             'variants_absent': 0,
             'biallelic_snv': 0,
-            'biallelic_mnv': 0,
-            'multiallelic_snv': 0,
-            'multiallelic_mnv': 0,
+            'biallelic': 0,
+            'snv': 0,
+            'mixed': 0,
             'ref_count': 0,
             'alt_count': 0,
             'other_count': 0,
@@ -335,8 +335,8 @@ class ProcessAlignments(object):
             'to_remap': 0
         }
         # Create named tuple to contain allele flipped reads
-        self.read = collections.namedtuple(
-            'read', ['sequence', 'quality', 'edits']
+        self.FlippedRead = collections.namedtuple(
+            'FlippedRead', ['sequence', 'quality', 'edits']
         )
 
     def close(
@@ -348,15 +348,13 @@ class ProcessAlignments(object):
         self.fastq.close()
 
     def count_ref_alt_matches(
-        self, read, variants
+        self, variants
     ):
         ''' Function counts matches between read alleles and vcf alleles'''
         # Loop through varaints and extract read allele
-        for variant in variants.values():
-            read_allele = read.query_sequence[variant.start:variant.end]
-            # Find match for read allele in variant alleles
+        for variant in variants:
             try:
-                allele_index = variant.alleles.index(read_allele)
+                allele_index = variant.alleles.index(variant.read_allele)
             except ValueError:
                 allele_index = None
             # Count match
@@ -367,73 +365,31 @@ class ProcessAlignments(object):
             else:
                 self.counter['alt_count'] += 1
 
-    def excess_variants(
-        self, variant_list
-    ):
-        '''Function checks if any variants overlap'''
-        for variants in variant_list:
-            if len(variants) > self.max_vars:
-                return(True)
-        return(False)
-
     def variants_overlap(
         self, variant_list
     ):
         '''Function checks if any variants overlap'''
         for variants in variant_list:
             start_position = 0
-            for variant in variants.values():
+            for variant in variants:
                 if variant.start < start_position:
                     return(True)
                 start_position = variant.end
         return(False)
 
     def conflicting_alleles(
-        self, read_list, variant_list
+        self, variant_list
     ):
         """Checks if paired reads have conflicting alleles"""
         # Only process paired reads
         if self.bam_generator.paired:
-            # Extract paired reads and variants
-            read1, read2 = read_list
-            read1_variants, read2_variants = variant_list
-            # Loop through commom positions
-            common_positions = read1_variants.keys() & read2_variants.keys()
-            for position in common_positions:
-                # Get variants for each read
-                read1_variant = read1_variants[position]
-                read2_variant = read2_variants[position]
-                # Get read alleles
-                read1_allele = read1.query_sequence[
-                    read1_variant.start:read1_variant.end
-                ]
-                read2_allele = read2.query_sequence[
-                    read2_variant.start:read2_variant.end
-                ]
-                # Return true if alleles do not macth
-                if read1_allele != read2_allele:
-                    return(True)
-        return(False)
-
-    def non_snv(
-        self, variant_list
-    ):
-        """Function checks if any variants are not SNVs"""
-        for variants in variant_list:
-            for variant in variants.values():
-                for allele in variant.alleles:
-                    if len(allele) > 1:
-                        return(True)
-        return(False)
-
-    # Determines if read variants overlap
-    def non_biallelic(
-        self, variant_list
-    ):
-        """Function checks if any variants are not biallelic"""
-        for variants in variant_list:
-            for variant in variants.values():
-                if len(variant.alleles) > 2:
+            common_variants = set(variant_list[0]).intersection(
+                set(variant_list[1])
+            )
+            for variant in common_variants:
+                var1 = variant_list[0][variant_list[0].index(variant)]
+                var2 = variant_list[1][variant_list[1].index(variant)]
+                if var1.read_allele != var2.read_allele:
                     return(True)
         return(False)
 
@@ -451,11 +407,11 @@ class ProcessAlignments(object):
 
     # Function generates allele flipped reads for supplied variants
     def generate_flipped_reads(
-        self, read, variants
+        self, read, read_variants
     ):
         """Generate set of reads with all possible combinations"""
         # Create inital read and get mean base quality across aligned segment
-        initial_read = self.read(
+        initial_read = self.FlippedRead(
             sequence=read.query_sequence, quality=list(read.query_qualities),
             edits={}
         )
@@ -464,41 +420,42 @@ class ProcessAlignments(object):
         current_reads = [initial_read]
         new_reads = []
         # Loop though variants end to start
-        positions = list(variants.keys())
-        positions.sort(reverse=True)
-        for position in positions:
-            variant = variants[position]
+        read_variants = sorted(
+            read_variants, key=lambda x: x.start, reverse=True
+        )
+        for variant in read_variants:
             # Merge possible reference and alternative alleles
             for new_allele in variant.alleles:
                 for old_read in current_reads:
                     # Skip identical alleles
-                    old_allele = old_read.sequence[variant.start:variant.end]
-                    if old_allele == new_allele:
-                        continue
+                    old_allele = old_read.sequence[
+                        variant.read_start:variant.read_end
+                    ]
+                    assert(old_allele == variant.read_allele)
                     # Skip '*' marking deletions spanning variant position
                     if new_allele == '*':
                         continue
                     # Create new sequence
                     new_sequence = (
-                        old_read.sequence[:variant.start] +
+                        old_read.sequence[:variant.read_start] +
                         new_allele +
-                        old_read.sequence[variant.end:]
+                        old_read.sequence[variant.read_end:]
                     )
                     # Create new quality
                     if len(old_allele) == len(new_allele):
                         new_quality = old_read.quality
                     else:
                         new_quality = (
-                            old_read.quality[:variant.start] +
+                            old_read.quality[:variant.read_start] +
                             [mean_quality] * len(new_allele) +
-                            old_read.quality[variant.end:]
+                            old_read.quality[variant.read_end:]
                         )
                     assert(len(new_sequence) == len(new_quality))
                     # Create new edits
                     new_edits = old_read.edits
-                    new_edits[position] = new_allele
+                    new_edits[variant.start] = new_allele
                     # Store modified read
-                    new_read = self.read(
+                    new_read = self.FlippedRead(
                         sequence=new_sequence, quality=new_quality,
                         edits=new_edits
                     )
@@ -562,39 +519,44 @@ class ProcessAlignments(object):
                     self.counter['abnormal_alignment'] += read_no
                     continue
                 # Get variant types
-                has_variants = any([len(v) > 0 for v in variant_list])
-                non_snv_variants = self.non_snv(variant_list)
-                non_biallelic_variants = self.non_biallelic(variant_list)
-                if has_variants:
-                    if non_snv_variants:
-                        if non_biallelic_variants:
-                            self.counter['multiallelic_mnv'] += read_no
-                        else:
-                            self.counter['biallelic_mnv'] += read_no
-                    else:
-                        if non_biallelic_variants:
-                            self.counter['multiallelic_snv'] += read_no
-                        else:
+                variant_counts = [len(v) for v in variant_list]
+                total_variants = sum(variant_counts)
+                all_snv = all(
+                    [v.is_snv() for v in itertools.chain(*variant_list)]
+                )
+                all_biallelic = all(
+                    [v.is_biallelic() for v in itertools.chain(*variant_list)]
+                )
+                # Count variant types...
+                if total_variants > 0:
+                    if all_snv:
+                        if all_biallelic:
                             self.counter['biallelic_snv'] += read_no
+                        else:
+                            self.counter['snv'] += read_no
+                    else:
+                        if all_biallelic:
+                            self.counter['biallelic'] += read_no
+                        else:
+                            self.counter['mixed'] += read_no
+                # Or save reads with no variants
                 else:
                     self.counter['variants_absent'] += read_no
-                # Get allele counts
-                for read, variants in zip(read_list, variant_list):
-                    self.count_ref_alt_matches(read, variants)
-                # Save reads without any variants and continue
-                if not has_variants:
                     for read in read_list:
                         self.outbam.write(read)
                     continue
+                # Count reference, alternative and other matches
+                for variants in variant_list:
+                    self.count_ref_alt_matches(variants)
                 # Count reads with unwanted variants
-                if non_snv_variants and self.only_snv:
+                if not all_snv and self.only_snv:
                     self.counter['unwanted_variants'] += read_no
                     continue
-                if non_biallelic_variants and self.only_biallelic:
+                if not all_biallelic and self.only_biallelic:
                     self.counter['unwanted_variants'] += read_no
                     continue
                 # Count reads with excess variants and continue
-                if self.excess_variants(variant_list):
+                if any([count > self.max_vars for count in variant_counts]):
                     self.counter['excess_variants'] += read_no
                     continue
                 # Count reads containing overlapping variants and continue
@@ -603,7 +565,7 @@ class ProcessAlignments(object):
                     continue
                 # Count paired reads with conflicting alleles and continue
                 if read_no == 2:
-                    if self.conflicting_alleles(read_list, variant_list):
+                    if self.conflicting_alleles(variant_list):
                         self.counter['conflicting_alleles'] += read_no
                         continue
                 # Generate flipped reads
