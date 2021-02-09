@@ -13,9 +13,12 @@ rule all:
     input:
         config['out_prefix'] + '.filtered.rmdup.bam',
         config['out_prefix'] + '.filtered.rmdup.bai',
-        config['out_prefix'] + '.filtered.rmdup.log',
-        config['out_prefix'] + '.variant_log.txt',
-        config['out_prefix'] + '.filter_log.txt'
+        config['out_prefix'] + '.variant_counts.txt.gz',
+        config['out_prefix'] + '.variant_counts.txt.gz.tbi',
+        config['out_prefix'] + '.first_alignment_log.txt',
+        config['out_prefix'] + '.second_alignment_log.txt',
+        config['out_prefix'] + '.rmdup_log.txt',
+        config['out_prefix'] + '.variant_counts_log.txt'
 
 # Align initial fastq reads to the genome
 rule first_alignment:
@@ -48,9 +51,9 @@ rule filter_first_alignment:
         bai = config['out_prefix'] + '.initial.bai',
         vcf = config['vcf']
     output:
-        bam = temp(config['out_prefix'] + '.invariant.bam'),
-        fastq = temp(config['out_prefix'] + '.remap.fq.gz'),
-        log = config['out_prefix'] + '.variant_log.txt'
+        bam = temp(config['out_prefix'] + '.no_variants.bam'),
+        fastq = temp(config['out_prefix'] + '.allele_flipped.fq.gz'),
+        log = config['out_prefix'] + '.first_alignment_log.txt'
     params:
         script = config['wasp'] + '/generate_variant_reads.py',
         prefix = config['out_prefix'],
@@ -62,9 +65,9 @@ rule filter_first_alignment:
 # Realign reads along with their allele flipped versions
 rule second_alignment:
     input:
-        config['out_prefix'] + '.remap.fq.gz'
+        config['out_prefix'] + '.allele_flipped.fq.gz'
     output:
-        temp(config['out_prefix'] + '.remap.sam')
+        temp(config['out_prefix'] + '.allele_flipped.sam')
     params:
         fasta = config['fasta'],
         rg = config['read_group'],
@@ -76,9 +79,9 @@ rule second_alignment:
 # Sort second alignment by read name
 rule sort_second_alignment:
     input:
-        config['out_prefix'] + '.remap.sam'
+        config['out_prefix'] + '.allele_flipped.sam'
     output:
-        temp(config['out_prefix'] + '.remap.bam')
+        temp(config['out_prefix'] + '.allele_flipped.bam')
     shell:
         'picard SortSam -I {input} -O {output} -SO queryname'
 
@@ -86,10 +89,10 @@ rule sort_second_alignment:
 # to the same location
 rule filter_second_alignment:
     input:
-        config['out_prefix'] + '.remap.bam'
+        config['out_prefix'] + '.allele_flipped.bam'
     output:
         temp(config['out_prefix'] + '.consistent.bam'),
-        config['out_prefix'] + '.filter_log.txt',
+        config['out_prefix'] + '.second_alignment_log.txt',
     params:
         script = config['wasp'] + '/filter_remapped_reads.py',
         prefix = config['out_prefix'],
@@ -103,7 +106,7 @@ rule filter_second_alignment:
 # Merge all passed alignments
 rule merge_alignments:
     input:
-        bam1 = config['out_prefix'] + '.invariant.bam',
+        bam1 = config['out_prefix'] + '.no_variants.bam',
         bam2 = config['out_prefix'] + '.consistent.bam'
     output:
         temp(config['out_prefix'] + '.filtered.bam')
@@ -129,9 +132,26 @@ rule randomly_remove_duplicates:
     output:
         bam = config['out_prefix'] + '.filtered.rmdup.bam',
         bai = config['out_prefix'] + '.filtered.rmdup.bai',
-        log = config['out_prefix'] + '.filtered.rmdup.log'
+        log = config['out_prefix'] + '.rmdup_log.txt'
     shell:
         'picard MarkDuplicates -I {input.bam} -M {output.log} -O {output.bam} '
         '--ASSUME_SORTED --DUPLICATE_SCORING_STRATEGY RANDOM '
         '--REMOVE_DUPLICATES true --CREATE_INDEX true'
 
+# Variant counts
+rule get_counts:
+    input:
+        bam = config['out_prefix'] + '.filtered.rmdup.bam',
+        bai = config['out_prefix'] + '.filtered.rmdup.bai',
+        vcf = config['vcf']
+    output:
+        counts = config['out_prefix'] + '.variant_counts.txt.gz',
+        index = config['out_prefix'] + '.variant_counts.txt.gz.tbi',
+        log = config['out_prefix'] + '.variant_counts_log.txt'
+    params:
+        script = config['wasp'] + '/get_counts.py',
+        prefix = config['out_prefix'],
+        sample = config['sample']
+    shell:
+        'python {params[script]} --bam {input.bam} --vcf {input.vcf} '
+        '--sample {params[sample]} --outprefix {params[prefix]}'
