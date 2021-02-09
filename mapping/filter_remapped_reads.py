@@ -310,5 +310,5 @@ if __name__ == "__main__":
             max_diff=args.wobble
         )
     # Write readstats to file
-    with open(args.out_prefix + '.filter_log.txt', 'wt') as log:
+    with open(args.out_prefix + '.second_alignment_log.txt', 'wt') as log:
         read_stats.write(log)
