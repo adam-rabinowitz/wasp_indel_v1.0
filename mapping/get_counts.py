@@ -1,331 +1,193 @@
 import argparse
-import collections
-import intervaltree
+import os
 import pysam
 import random
 import vartree
 
 
-class BamCoverage(object):
-
-    def __init__(self, seed=42):
-        # Initialise trees
-        self.ref = intervaltree.IntervalTree()
-        self.alt = intervaltree.IntervalTree()
-        self.other = intervaltree.IntervalTree()
-        # Set random seed
-        random.seed(seed)
-        # Set hets
-        self.hets = ('0/1', '1/0')
-        # Create count tuple
-        self.counts = collections.namedtuple(
-            'counts', ['ref', 'alt', 'other']
-        )
-
-    def add_reads(self, reads, genotypes, alleles):
-        # Get allele
-        assert(len(genotypes) == len(alleles))
-        if len(genotypes) > 0:
-            het_alleles = [
-                a for g, a in zip(genotypes, alleles) if g in self.hets
-            ]
-            if het_alleles:
-                allele = random.choice(het_alleles)
-            else:
-                allele = random.choice(alleles)
-        else:
-            allele = 'ref'
-        # Add reads to trees
-        for read in reads:
-            interval = intervaltree.Interval(
-                read.reference_start, read.reference_end, read.query_name
-            )
-            if allele == 'ref':
-                self.ref.add(interval)
-            elif allele == 'alt':
-                self.alt.add(interval)
-            elif allele == 'other':
-                self.other.add(interval)
-
-    def get_allele_counts(self, start, end):
-        # Loop through interval trees
-        count_list = []
-        for tree in (self.ref, self.alt, self.other):
-            # Count unique reads overlapping inter
-            reads = set()
-            for interval in tree.overlap(start, end):
-                reads.add(interval.data)
-            read_counts = len(reads)
-            count_list.append(read_counts)
-        # Create tuple and return
-        count_tuple = self.counts(*count_list)
-        return(count_tuple)
-
-
 class GenerateCounts(object):
 
     def __init__(
-        self, bam, vcf, sample, window, paired_end, partial
+        self, bam, vcf, sample, partial
     ):
         # Store input arguments
         self.bam_path = bam
         self.vcf_path = vcf
         self.sample = sample
-        self.window = window
-        self.paired_end = paired_end
         self.partial = partial
-        # Create VarTree object
+        # Create VarTree object and open bam file
         self.vartree = vartree.VarTree(
             path=self.vcf_path, sample=self.sample
         )
-        # Extract data from BAM file
-        with pysam.AlignmentFile(self.bam_path) as bam:
-            # Check pairing
-            for read in bam.head(100):
-                if self.paired_end:
-                    assert(read.is_paired)
-                else:
-                    assert(not read.is_paired)
-            # Get total counts
-            if self.paired_end:
-                self.total = bam.mapped // 2
-            else:
-                self.total = bam.mapped
-            # Get chromosome lengths
-            self.chrom_lengths = {}
-            for chrom in bam.references:
-                self.chrom_lengths[chrom] = bam.get_reference_length(chrom)
-
-    def bam_generator(self, chromosome):
-        # Set processing variables
-        unpaired = {}
-        # Loop thorugh chromosome reads
-        with pysam.AlignmentFile(self.bam_path) as bam:
-            for read in bam.fetch(chromosome):
-                # Skip unmapped, secondary and supplementary alignments
-                if read.is_unmapped:
-                    continue
-                if read.is_secondary:
-                    continue
-                if read.is_supplementary:
-                    continue
-                # Process paired end reads
-                if read.is_paired:
-                    # Return pair if other read has been stored
-                    if read.query_name in unpaired:
-                        if read.is_read1:
-                            read1 = read
-                            read2 = unpaired.pop(read.query_name)
-                            assert(read2.is_read2)
-                        elif read.is_read2:
-                            read2 = read
-                            read1 = unpaired.pop(read.query_name)
-                            assert(read1.is_read1)
-                        yield([read1, read2])
-                    # Store read if first observed of pair
-                    else:
-                        unpaired[read.query_name] = read
-                # Return single end reads
-                else:
-                    yield([read])
-            # Check that all reads have been processed
-            assert(len(unpaired) == 0)
-
-    def get_genotype_probs(self, phred_probs, n_alt):
-        ''' Function designed for multiple alternative alleles'''
-        # Check length of supplied probabilities
-        n_prob = sum(range(1, n_alt + 2))
-        assert(len(phred_probs) == n_prob)
-        # Get probabilities and adjust to sum to zero
-        probs = [10 ** ((-p) / 10) for p in phred_probs]
-        norm_probs = [p / sum(probs) for p in probs]
-        # Get indices for ref, het and alt genotypes
-        het_indices = [int(i * ((i + 1) / 2)) for i in range(1, n_alt + 1)]
-        alt_indices = [i for i in range(1, n_prob) if i not in het_indices]
-        # Calculate probabilities and return
-        genotype_probs = {
-            'ref': norm_probs[0],
-            'het': sum([norm_probs[i] for i in het_indices]),
-            'alt': sum([norm_probs[i] for i in alt_indices])
+        self.bam = pysam.AlignmentFile(self.bam_path)
+        # Generate counter
+        self.counter = {
+            'non_biallelic': 0, 'no_haplotype': 0, 'homozygous': 0,
+            'heterozygous': 0, 'no_variant': 0, 'biallelic_het_variant': 0,
+            'other_variant': 0, 'ref': 0, 'alt': 0, 'other': 0
         }
-        return(genotype_probs)
 
-    def get_read_variants(
-        self, read_list
+    def close(
+        self
     ):
-        # Get read variants for single end reads
-        if len(read_list) == 1:
-            read_variants = self.vartree.get_read_variants(
-                read=read_list[0], partial=self.partial
-            )
-            variant_list = [read_variants]
-        # Get read variants for paired end reads
-        elif len(read_list) == 2:
-            read1_variants, read2_variants, identical = (
-                self.vartree.get_paired_read_variants(
-                    read1=read_list[0], read2=read_list[1],
-                    partial=self.partial
-                )
-            )
-            assert(identical)
-            variant_list = [read1_variants, read2_variants]
-        # Loop trhough read sequences and variants
-        read_variants = {}
-        for read, variants in zip(read_list, variant_list):
-            for position, variant in variants.items():
-                # Match read sequence to ref, alt, other
-                read_sequence = read.query_sequence[variant.start:variant.end]
-                if read_sequence == variant.ref:
-                    allele = 'ref'
-                elif read_sequence in variant.alts:
-                    allele = 'alt'
-                else:
-                    allele = 'other'
-                # Get variant id
-                variant_key = (position, variant.ref, variant.alts)
-                read_variants[variant_key] = allele
-        return(read_variants)
+        self.bam.close()
 
-    def add_window_counts(self, metrics, coverage, chromosome):
-        # Get chromosome length
-        chromosome_length = self.chrom_lengths[chromosome]
-        # Loop through variants
-        for variant_id in metrics.keys():
-            # Extract variant data
-            start, ref = variant_id[0:2]
-            end = start + len(ref)
-            # Get window counts
-            window_start = max(start - self.window, 0)
-            window_end = min(end + self.window, chromosome_length)
-            window_counts = coverage.get_allele_counts(
-                window_start, window_end
-            )
-            # Add counts to metrics
-            window_metrics = {
-                'window_start': window_start,
-                'window_end': window_end,
-                'ref_window': window_counts.ref,
-                'alt_window': window_counts.alt,
-                'other_window': window_counts.other
-            }
-            metrics[variant_id].update(window_metrics)
-        # Return updated metrics
-        return(metrics)
-
-    def write_metrics(self, chromosome, metrics, coverage, outfile):
+    def write_metrics(
+        self, variant_metrics, outfile
+    ):
         # Extract variants and sort by positions
-        variant_ids = list(metrics.keys())
-        variant_ids = sorted(variant_ids, key=lambda x: x[0])
+        variants = list(variant_metrics.keys())
+        variants = sorted(variants, key=lambda x: x.start)
         # Get counts for each variant
-        for variant_id in variant_ids:
-            variant_metrics = metrics[variant_id]
-            # Get variant id metrics
-            start, ref, alts = variant_id
-            alts = ','.join(alts)
-            # Process genotype
-            genotype = '|'.join(map(str, variant_metrics['genotype']))
-            genotype = genotype.replace('None', '.')
-            # Process probabilites
-            for prob in ('refprob', 'hetprob', 'altprob'):
-                if variant_metrics[prob] is None:
-                    variant_metrics[prob] = '.'
-                else:
-                    variant_metrics[prob] = '{:.4f}'.format(
-                        variant_metrics[prob]
-                    )
+        for variant in variants:
+            metrics = variant_metrics[variant]
             # Create output line
             out_line = (
-                '{chromosome}\t{start}\t{id}\t{ref}\t{alts}\t{window_start}\t'
-                '{window_end}\t{genotype}\t{refprob}\t{hetprob}\t{altprob}\t'
-                '{ref_count}\t{alt_count}\t{other_count}\t{ref_count_window}\t'
-                '{alt_count_window}\t{other_count_window}\n'
+                '{chromosome}\t{position}\t{id}\t{ref}\t{alts}\t{haplotype}\t'
+                '{ref_prob}\t{het_prob}\t{alt_prob}\t{ref_count}\t'
+                '{alt_count}\t{other_count}\n'
             ).format(
-                chromosome=chromosome,
-                start=start + 1,
-                id=variant_metrics['id'],
-                window_start=variant_metrics['window_start'] + 1,
-                window_end=variant_metrics['window_end'],
-                ref=ref,
-                alts=alts,
-                genotype=genotype,
-                refprob=variant_metrics['refprob'],
-                hetprob=variant_metrics['hetprob'],
-                altprob=variant_metrics['altprob'],
-                ref_count=variant_metrics['ref'],
-                alt_count=variant_metrics['alt'],
-                other_count=variant_metrics['other'],
-                ref_count_window=variant_metrics['ref_window'],
-                alt_count_window=variant_metrics['alt_window'],
-                other_count_window=variant_metrics['other_window']
+                chromosome=variant.chrom,
+                position=variant.start + 1,
+                id=variant.id,
+                ref=variant.alleles[0],
+                alts=','.join(variant.alleles[1:]),
+                haplotype=metrics['haplotype'],
+                ref_prob=metrics['ref_prob'],
+                het_prob=metrics['het_prob'],
+                alt_prob=metrics['alt_prob'],
+                ref_count=metrics['ref_count'],
+                alt_count=metrics['alt_count'],
+                other_count=metrics['other_count']
             )
             outfile.write(out_line)
 
+    def write_log(
+        self, outfile
+    ):
+        # Create output
+        log = (
+            'Variants:\n'
+            '  non biallelic: {non_biallelic}\n'
+            '  no haplotype: {no_haplotype}\n'
+            '  homozygous: {homozygous}\n'
+            '  heterozygous: {heterozygous}\n'
+            'Reads:\n'
+            '  no variants: {no_variant}\n'
+            '  biallelic heterozygotes variants: {biallelic_het_variant}\n'
+            '  other variants: {other_variant}\n'
+            'Read alelles:\n'
+            '  ref: {ref}\n'
+            '  alt: {alt}\n'
+            '  other: {other}\n'
+        ).format(**self.counter)
+        outfile.write(log)
+
     def process_chromosome_variants(self, chromosome, outfile):
-        # Create coverage object and read vcf
-        coverage = BamCoverage()
+        # Read in variants for vcf
         self.vartree.read_vcf(chromosome)
-        # Populate metrics dictionary with default values
-        metrics = {}
+        # Loop through variants and create default values
+        variant_metrics = {}
         for interval in self.vartree.tree:
-            # Set values for missing genotypes and probabilities
-            if None in interval.data.gt or None in interval.data.pl:
-                genotype = tuple([None] * len(interval.data.gt))
-                genotype_probs = {'ref': None, 'het': None, 'alt': None}
-            # or extract values from data
+            variant = interval.data
+            # Count and skip non-bial...
+            if variant.is_biallelic():
+                # Set default values for missing genotype and probabilities...
+                if None in variant.gt or None in variant.pl:
+                    self.counter['no_haplotype'] += 1
+                    haplotype = 'NA'
+                    ref_prob, het_prob, alt_prob = 'NA', 'NA', 'NA'
+                # or extract and format genotype and probabilities
+                else:
+                    # Count variant type
+                    if variant.is_heterozygous():
+                        self.counter['heterozygous'] += 1
+                    else:
+                        self.counter['homozygous'] += 1
+                    # Process haplotype and allele probabilites
+                    haplotype = '|'.join(map(str, variant.gt))
+                    probs = [10 ** ((-p) / 10) for p in variant.pl]
+                    adj_probs = [p / sum(probs) for p in probs]
+                    ref_prob, het_prob, alt_prob = [
+                        '{:.2f}'.format(p) for p in adj_probs
+                    ]
+                # Add variant to dictionary
+                variant_metrics[variant] = {
+                    'haplotype': haplotype, 'ref_count': 0, 'alt_count': 0,
+                    'other_count': 0, 'ref_prob': ref_prob,
+                    'het_prob': het_prob, 'alt_prob': alt_prob
+                }
+            # or count and skip multiallelic variants
             else:
-                genotype = [min(x, 1) for x in interval.data.gt]
-                genotype_probs = self.get_genotype_probs(
-                    phred_probs=interval.data.pl, n_alt=len(interval.data.alts)
-                )
-            # Get variant id
-            if interval.data.id is not None:
-                variant_id = interval.data.id
-            else:
-                variant_id = '{}_{}_{}_{}'.format(
-                    chromosome, interval.begin, interval.data.ref,
-                    '_'.join(interval.data.alts)
-                )
-            # Generate key for metrics dictionary
-            variant_key = (
-                interval.begin, interval.data.ref, interval.data.alts
-            )
-            # Add variant to dictionary
-            metrics[variant_key] = {
-                'id': variant_id, 'ref': 0, 'alt': 0, 'other': 0,
-                'genotype': genotype, 'refprob': genotype_probs['ref'],
-                'hetprob': genotype_probs['het'],
-                'altprob': genotype_probs['alt']
-            }
+                self.counter['non_biallelic'] += 1
         # Get variant metrics
-        if len(metrics) > 0:
-            for read_list in self.bam_generator(chromosome):
+        if len(variant_metrics) > 0:
+            for read in self.bam.fetch(contig=chromosome):
                 # Extract read variants and their associayed metrics
-                read_variants = self.get_read_variants(read_list=read_list)
-                variant_keys = list(read_variants.keys())
-                read_alleles = [read_variants[k] for k in variant_keys]
-                genotypes = [metrics[k]['genotype'] for k in variant_keys]
-                # Add allele counts
-                for key, allele in zip(variant_keys, read_alleles):
-                    metrics[key][allele] += 1
-                # Add coverage
-                coverage.add_reads(
-                    reads=read_list, genotypes=genotypes, alleles=read_alleles
+                read_variants = self.vartree.get_read_variants(
+                    read, partial=self.partial
                 )
-            # Add window counts to metrics
-            metrics = self.add_window_counts(
-                metrics, coverage, chromosome
-            )
+                # Get biallelic variants
+                biallelic_het_variants = [
+                    v for v in read_variants if v.is_biallelic_heterozygous()
+                ]
+                # Count and skip reads with no read variants
+                if not read_variants:
+                    self.counter['no_variant'] += 1
+                # Count and skip reads with no biallelic heterozygous variants
+                elif not biallelic_het_variants:
+                    self.counter['other_variant'] += 1
+                # Count and process reads with biallelic het variants
+                else:
+                    self.counter['biallelic_het_variant'] += 1
+                    # Select variant and match read allele to variant alleles
+                    selected_variant = random.choice(biallelic_het_variants)
+                    try:
+                        allele_index = selected_variant.alleles.index(
+                            selected_variant.read_allele
+                        )
+                    except ValueError:
+                        allele_index = None
+                    # Count matches
+                    if allele_index is None:
+                        self.counter['other'] += 1
+                        variant_metrics[selected_variant]['other_count'] += 1
+                    elif allele_index == 0:
+                        self.counter['ref'] += 1
+                        variant_metrics[selected_variant]['ref_count'] += 1
+                    elif allele_index == 1:
+                        self.counter['alt'] += 1
+                        variant_metrics[selected_variant]['alt_count'] += 1
             # Print metrics to file
             self.write_metrics(
-                chromosome=chromosome, metrics=metrics, coverage=coverage,
-                outfile=outfile
+                variant_metrics=variant_metrics, outfile=outfile
             )
 
-    def process_all_variants(self, outpath):
-        # Open outfile
-        with open(outpath, 'wt') as outfile:
+    def process_all_variants(self, count_path, log_path):
+        # Set counter to zero
+        for key in self.counter:
+            self.counter[key] = 0
+        # Open count file
+        with open(count_path, 'wt') as count_file:
+            # Add commented input paths and parameters
+            count_file.write(
+                '#bam={}\n'.format(os.path.abspath(self.bam_path))
+            )
+            count_file.write(
+                '#vcf={}\n'.format(os.path.abspath(self.vcf_path))
+            )
+            count_file.write('#sample={}\n'.format(self.sample))
+            # Add commented header
+            count_file.write(
+                '#chrom\tposition\tid\tref\talt\thaplotype\tref_prob\t'
+                'het_prob\talt_prob\tref_count\talt_count\tother_count\n'
+            )
+            # Get counts for each chromosome and add to file
             for chromosome in self.vartree.chromosomes:
-                self.process_chromosome_variants(chromosome, outfile)
+                self.process_chromosome_variants(chromosome, count_file)
+        # Write log to log file
+        with open(log_path, 'wt') as log_file:
+            self.write_log(log_file)
 
 
 # Run script
@@ -343,7 +205,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         "--bam", required=True, help=(
-            "Coordinate-sorted input BAM file."
+            "Filtered, coordinate sorted and indexed BAM file."
         )
     )
     parser.add_argument(
@@ -352,43 +214,38 @@ if __name__ == '__main__':
         )
     )
     parser.add_argument(
+        "--sample", required=True, help=(
+            "Sample for which to extract haplotype from VCF."
+        )
+    )
+    parser.add_argument(
         "--outprefix", required=True, help=(
             "Prefix of output files."
-        )
-    )
-    parser.add_argument(
-        "--sample", required=True, help=(
-            "Sample for which to extract genotype from VCF (default=None)"
-        )
-    )
-    parser.add_argument(
-        "--window", required=True, type=int, help=(
-            "Size of window around variants in which to calculate coverage"
-        )
-    )
-    parser.add_argument(
-        "--paired_end", action='store_true', help=(
-            "BAM file contains paired end alignments (default=False)"
         )
     )
     args = parser.parse_args()
     # Generate output files
     outfiles = {
         'initial': args.outprefix + '.variant_counts.txt',
-        'compressed': args.outprefix + '.variant_counts.txt.gz'
+        'compressed': args.outprefix + '.variant_counts.txt.gz',
+        'log': args.outprefix + '.variant_counts_log.txt'
     }
     # Generate counts
     count_generator = GenerateCounts(
-        bam=args.bam, vcf=args.vcf, sample=args.sample,
-        paired_end=args.paired_end, window=200, partial=False
+        bam=args.bam, vcf=args.vcf, sample=args.sample, partial=False
     )
-    count_generator.process_all_variants(outfiles['initial'])
-    # Compress and index file
+    count_generator.process_all_variants(
+        count_path=outfiles['initial'], log_path=outfiles['log']
+    )
+    count_generator.close()
+    # Compress output file and remove uncompressed version
     pysam.tabix_compress(
         filename_in=outfiles['initial'], filename_out=outfiles['compressed'],
         force=True
     )
+    os.remove(outfiles['initial'])
+    # Index tabix file
     pysam.tabix_index(
         filename=outfiles['compressed'], seq_col=0, start_col=1, end_col=1,
-        force=True
+        force=True, meta_char='#'
     )
