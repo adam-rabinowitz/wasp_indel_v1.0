@@ -114,13 +114,18 @@ class VarTree(object):
             else:
                 gt = (None,)
                 pl = (None,)
-            # Get hash
-
+            # Get variant id
+            if entry.id is None:
+                variant_id = '{}_{}_{}'.format(
+                    chromosome, entry.start + 1, '_'.join(alleles)
+                )
+            else:
+                variant_id = entry.id
             # Create intervaltree interval and add to list
             new_variant = IndividualVariant(
                 chrom=chromosome, start=entry.start, end=entry.stop,
-                alleles=alleles, id=entry.id, gt=gt, pl=pl,
-                read_start=None, read_end=None, read_allele=None,
+                alleles=alleles, id=variant_id, gt=gt, pl=pl, read_start=None,
+                read_end=None, read_allele=None,
                 hash=hash((chromosome, entry.start, alleles))
             )
             new_interval = intervaltree.Interval(
