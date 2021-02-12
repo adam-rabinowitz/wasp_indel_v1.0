@@ -1,6 +1,5 @@
 import bisect
 import collections
-import copy
 import intervaltree
 import pysam
 import sys
