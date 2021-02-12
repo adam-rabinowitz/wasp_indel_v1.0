@@ -243,6 +243,7 @@ def filter_bam_pairs(
         # Keep remaining reads
         for out_read in (read1[0], read2[0]):
             out_read.query_name = name
+            out_read.is_proper_pair = True
             outbam.write(out_read)
         read_stats.keep_reads += 2
     # Return read stats
