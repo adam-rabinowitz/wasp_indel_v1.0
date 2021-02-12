@@ -117,7 +117,8 @@ class OutputWriter(object):
             # Adjust probabilites
             hetp = [
                 self.calculate_posterior_hetp(
-                    prior=v.het_prob, ref=v.ref_count, alt=v.alt_count
+                    prior=v.het_prob, ref=v.ref_total_count,
+                    alt=v.alt_total_count
                 ) for v in region_variants
             ]
         else:
@@ -144,14 +145,14 @@ class OutputWriter(object):
                 # Extract counts for heterozygotic variants...
                 if variant.haplotype in self.heterozygotes:
                     if variant.haplotype == test_variant.haplotype:
-                        ref_hap_counts.append(variant.ref_count)
-                        alt_hap_counts.append(variant.alt_count)
-                        other_hap_counts.append(variant.other_count)
+                        ref_hap_counts.append(variant.ref_as_count)
+                        alt_hap_counts.append(variant.alt_as_count)
+                        other_hap_counts.append(variant.other_as_count)
                     # Get counts for discordant heterozygous haplotypes
                     else:
-                        ref_hap_counts.append(variant.alt_count)
-                        alt_hap_counts.append(variant.ref_count)
-                        other_hap_counts.append(variant.other_count)
+                        ref_hap_counts.append(variant.alt_as_count)
+                        alt_hap_counts.append(variant.ref_as_count)
+                        other_hap_counts.append(variant.other_as_count)
                 # or set counts to zero
                 else:
                     ref_hap_counts.append(0)
@@ -211,6 +212,7 @@ class OutputWriter(object):
         outline = ' '.join(line_list) + '\n'
         self.outfile.write(outline)
 
+
 if __name__ == "__main__":
     # Create argument parser
     parser = argparse.ArgumentParser(
@@ -241,7 +243,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--adjust_hetp", action='store_true', help=(
-            "Adjust heterozygous possibilities."
+            "Adjust heterozygous probabilities."
         )
     )
     args = parser.parse_args()
@@ -259,11 +261,13 @@ if __name__ == "__main__":
         )
         # Get region variants
         region_variants = variant_file.get_region_variants(
-            chrom=target.chrom, start=target.region_start, end=target.region_end
+            chrom=target.chrom, start=target.region_start,
+            end=target.region_end
         )
         # Get counts
         region_count = bam_file.get_counts(
-            chrom=target.chrom, start=target.region_start, end=target.region_end
+            chrom=target.chrom, start=target.region_start,
+            end=target.region_end
         )
         total_count = bam_file.total
         # Write output file
