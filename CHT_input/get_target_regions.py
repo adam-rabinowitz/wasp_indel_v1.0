@@ -3,6 +3,53 @@ import counts
 import gzip
 
 
+class FilterCounts(object):
+
+    def __init__(
+        self
+    ):
+        # Set initial count values
+        self.variants = 0
+        self.low_het = 0
+        self.low_minor = 0
+        self.variants_passed = 0
+        self.regions = 0
+        self.low_as_reads = 0
+        self.low_total_reads = 0
+        self.regions_passed = 0
+
+    def variant_counts(
+        self
+    ):
+        variant_counts = (
+            'Variants:\n'
+            '  considered: {variants}\n'
+            '  low heterozygous alleles: {low_het}\n'
+            '  low minor allele count: {low_minor}\n'
+            '  passed: {variants_passed}'
+        ).format(
+            variants=self.variants, low_het=self.low_het,
+            low_minor=self.low_minor, variants_passed=self.variants_passed
+        )
+        return(variant_counts)
+
+    def region_counts(
+        self
+    ):
+        region_counts = (
+            'Regions:\n'
+            '  considered: {regions}\n'
+            '  low allele specific reads: {low_as_reads}\n'
+            '  low total reads: {low_total_reads}\n'
+            '  passed: {regions_passed}'
+        ).format(
+            regions=self.regions, low_as_reads=self.low_as_reads,
+            low_total_reads=self.low_total_reads,
+            regions_passed=self.regions_passed
+        )
+        return(region_counts)
+
+
 class MultipleBamCounts(object):
 
     def __init__(self, paths):
@@ -26,18 +73,23 @@ class MultipleBamCounts(object):
 
 class MultipleVariantCounts(object):
 
-    def __init__(self, paths):
+    def __init__(
+        self, paths
+    ):
         # Store paths and create objects:
         self.paths = paths
         self.count_files = [counts.VariantCounts(p) for p in self.paths]
         # Set heterozygous haplotypes
         self.heterozygous = ('0|1', '1|0')
 
-    def get_all_variants(self):
+    def get_variants(
+        self, chrom=None, start=None, end=None
+    ):
         # Create generators
         variant_generators = [
-            count_file.get_region_variants() for
-            count_file in self.count_files
+            count_file.get_region_variants(
+                chrom=chrom, start=start, end=end
+            ) for count_file in self.count_files
         ]
         # Loop through generators and get variants
         while True:
@@ -57,15 +109,15 @@ class MultipleVariantCounts(object):
     def get_as_count(self, chrom, start, end):
         # Set output allele specific counts
         as_count = 0
-        # Loop through region in all count files
-        for count_file in self.count_files:
-            for variant in count_file.get_region_variants(
-                chrom=chrom, start=start, end=end
-            ):
+        # Loop through all region variants in all count files
+        for variants in self.get_variants(
+            chrom=chrom, start=start, end=end
+        ):
+            for variant in variants:
                 # Add ref and alt counts if variant is heterozygous
                 if variant.haplotype in self.heterozygous:
-                    as_count += variant.ref_count
-                    as_count += variant.alt_count
+                    as_count += variant.ref_as_count
+                    as_count += variant.alt_as_count
         # Return allele specific counts
         return(as_count)
 
@@ -87,11 +139,36 @@ class FilterVariants(object):
         # Create classes
         self.bam_counts = MultipleBamCounts(self.bam_paths)
         self.variant_counts = MultipleVariantCounts(self.variant_paths)
-        # Create counter
-        self.counter = {
-            'low_het': 0, 'low_minor': 0, 'low_as_reads': 0,
-            'low_total_reads': 0, 'passed': 0
-        }
+
+    def close(
+        self
+    ):
+        self.bam_counts.close()
+        self.variant_counts.close()
+
+    def region_generator(
+        self, path
+    ):
+        # Open region file
+        if path.endswith('.gz'):
+            infile = gzip.open(path, 'rt')
+        else:
+            infile = open(path, 'rt')
+        # Loop through input file skipping empty lines
+        for line in infile:
+            line = line.strip()
+            if not line:
+                continue
+            # Extract data from line
+            line_list = line.split('\t')
+            chrom = line_list[0]
+            test_start, test_end, region_start, region_end = map(
+                int, line_list[1:]
+            )
+            # Yield data
+            yield(chrom, test_start, test_end, region_start, region_end)
+        # Close file
+        infile.close()
 
     def filter_windows(
         self, min_het, min_minor, min_as_reads, min_total_reads, window,
@@ -102,48 +179,50 @@ class FilterVariants(object):
             outfile = gzip.open(outpath, 'wt')
         else:
             outfile = open(outpath, 'wt')
-        # Loop through variants
-        for test_variants in self.variant_counts.get_all_variants():
-            # Get count of heterozygous variants
+        # Create counter
+        filter_counts = FilterCounts()
+        # Loop through all variants
+        for test_variants in self.variant_counts.get_variants():
+            filter_counts.variants += 1
+            # Skip test variants if heterozygous count is too low
             test_haplotypes = [tv.haplotype for tv in test_variants]
             het_count = (
                 test_haplotypes.count('0|1') + test_haplotypes.count('1|0')
             )
-            # Count and skip variants with low number of heterozygotes
             if het_count < min_het:
-                self.counter['low_het'] += 1
+                filter_counts.low_het += 1
                 continue
-            # Calculate minor allele counts
+            # Skip test variants if minor allele count is too low
             ref_count = sum([tv.ref_count for tv in test_variants])
             alt_count = sum([tv.alt_count for tv in test_variants])
             minor_count = min(ref_count, alt_count)
-            # Count and skip variants with low number of minor alleles
             if minor_count < min_minor:
-                self.counter['low_minor'] += 1
+                filter_counts.low_minor += 1
                 continue
+            # Count passed variants and considered regions
+            filter_counts.variants_passed += 1
+            filter_counts.regions += 1
             # Define region
             chrom = test_variants[0].chrom
             chrom_length = self.bam_counts.chrom_lengths[chrom]
             region_start = max(test_variants[0].start - window, 0)
             region_end = min(test_variants[0].end + window, chrom_length)
-            # Get total read counts within window
+            # Skip region if total reads is too low
             total_reads = self.bam_counts.get_counts(
                 chrom=chrom, start=region_start, end=region_end
             )
-            # Count and skip regions with low number of total reads
             if total_reads < min_total_reads:
-                self.counter['low_total_reads'] += 1
+                filter_counts.low_total_reads += 1
                 continue
-            # Get allele specific counts within region
+            # Skip region if allele specific reads are too low
             as_reads = self.variant_counts.get_as_count(
                 chrom=chrom, start=region_start, end=region_end
             )
-            # Count and skip regions with low number of as reads
             if as_reads < min_as_reads:
-                self.counter['low_as_reads'] += 1
+                filter_counts.low_as_reads += 1
                 continue
-            # Write data to file
-            self.counter['passed'] += 1
+            # Write acceptable test variants and regions to file
+            filter_counts.regions_passed += 1
             outline = (
                 '{chrom}\t{pos}\t{ref}\t{alt}\t{start}\t{end}\n'
             ).format(
@@ -152,11 +231,76 @@ class FilterVariants(object):
                 start=region_start + 1, end=region_end
             )
             outfile.write(outline)
-        print(self.counter)
+        # Print filter metrics
+        print(filter_counts.variant_counts())
+        print(filter_counts.region_counts())
 
-    def close(self):
-        self.bam_counts.close()
-        self.variant_counts.close()
+    def filter_regions(
+        self, min_het, min_minor, min_as_reads, min_total_reads,
+        regions, outpath
+    ):
+        # Open outfile
+        if outpath.endswith('.gz'):
+            outfile = gzip.open(outpath, 'wt')
+        else:
+            outfile = open(outpath, 'wt')
+        # Create counter
+        filter_counts = FilterCounts()
+        # Loop thorugh region file
+        reg_gen = self.region_generator(regions)
+        for chrom, test_start, test_end, region_start, region_end in reg_gen:
+            filter_counts.regions += 1
+            # Adjust stars to account for zero indexing
+            test_start -= 1
+            region_start -= 1
+            # Skip region if total reads is too low
+            total_reads = self.bam_counts.get_counts(
+                chrom=chrom, start=region_start, end=region_end
+            )
+            if total_reads < min_total_reads:
+                filter_counts.low_total_reads += 1
+                continue
+            # Skip region if allele specific reads are too low
+            as_reads = self.variant_counts.get_as_count(
+                chrom=chrom, start=region_start, end=region_end
+            )
+            if as_reads < min_as_reads:
+                filter_counts.low_as_reads += 1
+                continue
+            # Loop through variants
+            filter_counts.regions_passed += 1
+            for test_variants in self.variant_counts.get_variants(
+                chrom=chrom, start=test_start, end=test_end
+            ):
+                filter_counts.variants += 1
+                # Skip test variants if heterozygous count is too low
+                test_haplotypes = [tv.haplotype for tv in test_variants]
+                het_count = (
+                    test_haplotypes.count('0|1') + test_haplotypes.count('1|0')
+                )
+                if het_count < min_het:
+                    filter_counts.low_het += 1
+                    continue
+                # Skip test variants if minor allele count is too low
+                ref_as_count = sum([tv.ref_as_count for tv in test_variants])
+                alt_as_count = sum([tv.alt_as_count for tv in test_variants])
+                minor_as_count = min(ref_as_count, alt_as_count)
+                if minor_as_count < min_minor:
+                    filter_counts.low_minor += 1
+                    continue
+                # Write acceptable test variants and regions to file
+                filter_counts.variants_passed += 1
+                outline = (
+                    '{chrom}\t{pos}\t{ref}\t{alt}\t{start}\t{end}\n'
+                ).format(
+                    chrom=chrom, pos=test_variants[0].start + 1,
+                    ref=test_variants[0].ref, alt=test_variants[0].alt,
+                    start=region_start + 1, end=region_end
+                )
+                outfile.write(outline)
+        # Print filter metrics
+        print(filter_counts.region_counts())
+        print(filter_counts.variant_counts())
 
 
 if __name__ == "__main__":
@@ -206,20 +350,40 @@ if __name__ == "__main__":
             "across all individuals."
         )
     )
-    parser.add_argument(
-        "--window", required=True, type=int, help=(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--window", type=int, help=(
             "Distance upstream and downstream of the test variant in which "
             "to exract allele specific and total read counts."
         )
     )
+    group.add_argument(
+        "--regions", help=(
+            "File containing region coordinates. File should contain five "
+            "columns: chrom, start and end of test variant region and "
+            "start and end of region in which to perform test."
+        )
+    )
     args = parser.parse_args()
-    # Filter variants
+    # Create variant filter object
     variant_filter = FilterVariants(
         bam_paths=args.bams, variant_paths=args.variants
     )
-    variant_filter.filter_windows(
-        min_het=args.min_het, min_minor=args.min_minor,
-        min_as_reads=args.min_as_reads, min_total_reads=args.min_total_reads,
-        window=args.window, outpath=args.outfile
-    )
+    # Get test variants and associate windows if window set else...
+    if args.window:
+        variant_filter.filter_windows(
+            min_het=args.min_het, min_minor=args.min_minor,
+            min_as_reads=args.min_as_reads,
+            min_total_reads=args.min_total_reads,
+            window=args.window, outpath=args.outfile
+        )
+    # or get test variants within regions if regions set else...
+    elif args.regions:
+        variant_filter.filter_regions(
+            min_het=args.min_het, min_minor=args.min_minor,
+            min_as_reads=args.min_as_reads,
+            min_total_reads=args.min_total_reads,
+            regions=args.regions, outpath=args.outfile
+        )
+    # Close files
     variant_filter.close()
