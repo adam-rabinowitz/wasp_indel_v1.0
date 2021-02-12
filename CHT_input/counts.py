@@ -5,8 +5,9 @@ import pysam
 VariantTuple = collections.namedtuple(
     '_Variant', [
         'chrom', 'start', 'end', 'id', 'ref', 'alt', 'haplotype', 'ref_prob',
-        'het_prob', 'alt_prob', 'ref_count', 'alt_count', 'other_count',
-        'hash'
+        'het_prob', 'alt_prob', 'ref_as_count', 'alt_as_count',
+        'other_as_count', 'ref_total_count', 'alt_total_count',
+        'other_total_count', 'hash'
     ]
 )
 
@@ -17,7 +18,7 @@ class IndividualVariant(VariantTuple):
     def from_line(cls, line):
         # Split line data and extract values
         line_data = line.strip().split('\t')
-        assert(len(line_data) == 12)
+        assert(len(line_data) == 15)
         # Extract variant description
         chrom = line_data[0]
         position = int(line_data[1])
@@ -33,13 +34,21 @@ class IndividualVariant(VariantTuple):
             haplotype = line_data[5]
             ref_prob, het_prob, alt_prob = map(float, line_data[6:9])
         # Get counts
-        ref_count, alt_count, other_count = map(int, line_data[9:12])
+        ref_as_count, alt_as_count, other_as_count = map(
+            int, line_data[9:12]
+        )
+        ref_total_count, alt_total_count, other_total_count = map(
+            int, line_data[12:15]
+        )
         # Generate hash
         new_variant = cls(
             chrom=chrom, start=start, end=end, id=id, ref=ref, alt=alt,
             haplotype=haplotype, ref_prob=ref_prob, het_prob=het_prob,
-            alt_prob=alt_prob, ref_count=ref_count, alt_count=alt_count,
-            other_count=other_count, hash=hash((chrom, position, ref, alt))
+            alt_prob=alt_prob, ref_as_count=ref_as_count,
+            alt_as_count=alt_as_count, other_as_count=other_as_count,
+            ref_total_count=ref_total_count, alt_total_count=alt_total_count,
+            other_total_count=other_total_count,
+            hash=hash((chrom, position, ref, alt))
         )
         return(new_variant)
 
