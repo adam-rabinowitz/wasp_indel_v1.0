@@ -5,25 +5,20 @@ import pysam
 import sys
 
 
-VariantTuple = collections.namedtuple(
-    'VariantTuple', [
-        'chrom', 'start', 'end', 'alleles', 'id', 'gt', 'pl',
-        'read_start', 'read_end', 'read_allele', 'hash'
-    ]
-)
-
-
-class IndividualVariant(VariantTuple):
+class VariantFunctions(object):
 
     def __hash__(
         self
     ):
-        return(self.hash)
+        return(hash(self.id))
 
     def __eq__(
         self, other
     ):
-        if self.__class__ == other.__class__ and self.hash == other.hash:
+        if (
+            self.__class__ == other.__class__ and
+            self.__hash__() == other.__hash__()
+        ):
             return(True)
         return(False)
 
@@ -44,7 +39,8 @@ class IndividualVariant(VariantTuple):
         return(False)
 
     def is_heterozygous(self):
-        if None not in self.gt and len(set(self.gt)) == 2:
+        genotypes = set(self.genotype)
+        if None not in genotypes and len(genotypes) == 2:
             return(True)
         return(False)
 
@@ -53,6 +49,29 @@ class IndividualVariant(VariantTuple):
             return(True)
         else:
             return(False)
+
+
+_GenomeVariant = collections.namedtuple(
+    'GenomeVariant', ['alleles', 'id', 'genotype', 'probs']
+)
+
+
+class GenomeVariant(_GenomeVariant, VariantFunctions):
+
+    pass
+
+
+_OverlappingVariant = collections.namedtuple(
+    'OverlappingVariant', [
+        'chrom', 'start', 'end', 'alleles', 'id', 'genotype', 'probs',
+        'read_start', 'read_end', 'read_allele'
+    ]
+)
+
+
+class OverlappingVariant(_OverlappingVariant, VariantFunctions):
+
+    pass
 
 
 class VarTree(object):
@@ -106,13 +125,27 @@ class VarTree(object):
             for alt in alleles[1:]:
                 for alt_base in alt:
                     assert(alt_base in self.alt_set)
-            # Get genotype
+            # Get genotype and associated probabilities
             if self.sample:
-                gt = entry.samples[self.sample]['GT']
-                pl = entry.samples[self.sample]['PL']
+                # Get sample data and genotype
+                sample_data = entry.samples[self.sample]
+                genotype = sample_data['GT']
+                # Set probabilities to None if genotype unknown or...
+                if None in genotype:
+                    probs = None
+                # Calculate probabilities
+                else:
+                    if 'GL' in sample_data:
+                        raw_prob = [10 ** p for p in sample_data['GL']]
+                    elif 'PL' in sample_data:
+                        raw_prob = [10 ** (-p / 10) for p in sample_data['PL']]
+                    else:
+                        raise KeyError('absent genotype probability')
+                    # Normalise probability
+                    probs = tuple([p / sum(raw_prob) for p in raw_prob])
             else:
-                gt = (None,)
-                pl = (None,)
+                genotype = None
+                probs = None
             # Get variant id
             if entry.id is None:
                 variant_id = '{}_{}_{}'.format(
@@ -121,11 +154,9 @@ class VarTree(object):
             else:
                 variant_id = entry.id
             # Create intervaltree interval and add to list
-            new_variant = IndividualVariant(
-                chrom=chromosome, start=entry.start, end=entry.stop,
-                alleles=alleles, id=variant_id, gt=gt, pl=pl, read_start=None,
-                read_end=None, read_allele=None,
-                hash=hash((chromosome, entry.start, alleles))
+            new_variant = GenomeVariant(
+                alleles=alleles, id=variant_id, genotype=genotype,
+                probs=probs
             )
             new_interval = intervaltree.Interval(
                 entry.start, entry.stop, new_variant
@@ -151,7 +182,14 @@ class VarTree(object):
         '''
         # include intervals partially contained within interval or...
         intervals = self.tree.overlap(start, end)
-        variants = [x.data for x in intervals]
+        variants = [
+            OverlappingVariant(
+                chrom=self.current_chromosome, start=i.begin, end=i.end,
+                alleles=i.data.alleles, id=i.data.id, genotype=i.data.genotype,
+                probs=i.data.probs, read_start=None, read_end=None,
+                read_allele=None
+            ) for i in intervals
+        ]
         return(variants)
 
     def get_read_variants(
@@ -171,24 +209,29 @@ class VarTree(object):
         read_variants: list
 
         '''
+        # Check chromosome
+        if not self.current_chromosome == read.reference_name:
+            raise ValueError('mismatched chromosomes')
         # Get all variants
-        genomic_variants = set()
+        overlapping_variants = set()
         for start, end in read.get_blocks():
             for variant in self.get_overlapping_variants(start=start, end=end):
-                genomic_variants.add(variant)
+                overlapping_variants.add(variant)
         # Convert genomic variants into a list and sort
-        genomic_variants = list(genomic_variants)
-        genomic_variants = sorted(genomic_variants, key=lambda x: x.start)
+        overlapping_variants = list(overlapping_variants)
+        overlapping_variants = sorted(
+            overlapping_variants, key=lambda x: x.start
+        )
         # Filter partially overlapping start and end
         if not partial:
-            genomic_variants = [
-                gv for gv in genomic_variants if
-                gv.start >= read.reference_start and
-                gv.end <= read.reference_end
+            overlapping_variants = [
+                ov for ov in overlapping_variants if
+                ov.start >= read.reference_start and
+                ov.end <= read.reference_end
             ]
         # Create read variants from genomic variants
         read_variants = []
-        if genomic_variants:
+        if overlapping_variants:
             # Extract read data
             positions = read.get_reference_positions(full_length=True)
             read_align_start = read.query_alignment_start
@@ -209,7 +252,7 @@ class VarTree(object):
                         positions[i] = positions[i - 1]
                 assert(None not in positions[read_align_start:read_align_end])
             # Loop through putative variant end get read variants
-            for variant in genomic_variants:
+            for variant in overlapping_variants:
                 # Add indices of variant within read
                 read_start = bisect.bisect_left(
                     a=positions, x=variant.start, lo=read_align_start,
