@@ -1,4 +1,5 @@
 import argparse
+import collections
 import os
 import pysam
 import random
@@ -36,35 +37,15 @@ class GenerateCounts(object):
     def write_metrics(
         self, variant_metrics, outfile
     ):
-        # Extract variants and sort by positions
-        variants = list(variant_metrics.keys())
-        variants = sorted(variants, key=lambda x: x.start)
         # Get counts for each variant
-        for variant in variants:
-            metrics = variant_metrics[variant]
+        for variant in variant_metrics.values():
             # Create output line
             out_line = (
                 '{chromosome}\t{position}\t{id}\t{ref}\t{alts}\t{haplotype}\t'
                 '{ref_prob}\t{het_prob}\t{alt_prob}\t{ref_as_count}\t'
                 '{alt_as_count}\t{other_as_count}\t{ref_total_count}\t'
                 '{alt_total_count}\t{other_total_count}\n'
-            ).format(
-                chromosome=variant.chrom,
-                position=variant.start + 1,
-                id=variant.id,
-                ref=variant.alleles[0],
-                alts=','.join(variant.alleles[1:]),
-                haplotype=metrics['haplotype'],
-                ref_prob=metrics['ref_prob'],
-                het_prob=metrics['het_prob'],
-                alt_prob=metrics['alt_prob'],
-                ref_as_count=metrics['ref_as_count'],
-                alt_as_count=metrics['alt_as_count'],
-                other_as_count=metrics['other_as_count'],
-                ref_total_count=metrics['ref_total_count'],
-                alt_total_count=metrics['alt_total_count'],
-                other_total_count=metrics['other_total_count']
-            )
+            ).format(**variant)
             outfile.write(out_line)
 
     def write_log(
@@ -95,13 +76,15 @@ class GenerateCounts(object):
         # Set random seed so that ouptut is reproducible
         random.seed(42)
         # Loop through variants and create default values
-        variant_metrics = {}
-        for interval in self.vartree.tree:
+        variant_metrics = collections.OrderedDict()
+        for interval in sorted(self.vartree.tree):
+            # Extract interval data
+            position = interval.begin + 1
             variant = interval.data
             # Count and skip non-bial...
             if variant.is_biallelic():
                 # Set default values for missing genotype and probabilities...
-                if None in variant.gt or None in variant.pl:
+                if None in variant.genotype:
                     self.counter['no_haplotype'] += 1
                     haplotype = 'NA'
                     ref_prob, het_prob, alt_prob = 'NA', 'NA', 'NA'
@@ -113,14 +96,16 @@ class GenerateCounts(object):
                     else:
                         self.counter['homozygous'] += 1
                     # Process haplotype and allele probabilites
-                    haplotype = '|'.join(map(str, variant.gt))
-                    probs = [10 ** ((-p) / 10) for p in variant.pl]
-                    adj_probs = [p / sum(probs) for p in probs]
+                    haplotype = '|'.join(map(str, variant.genotype))
                     ref_prob, het_prob, alt_prob = [
-                        '{:.2f}'.format(p) for p in adj_probs
+                        '{:.2f}'.format(p) for p in variant.probs
                     ]
                 # Add variant to dictionary
-                variant_metrics[variant] = {
+                assert(variant.id not in variant_metrics)
+                variant_metrics[variant.id] = {
+                    'chromosome': chromosome, 'position': position,
+                    'id': variant.id, 'ref': variant.alleles[0],
+                    'alts': ','.join(variant.alleles[1:]),
                     'haplotype': haplotype, 'ref_as_count': 0,
                     'alt_as_count': 0, 'other_as_count': 0,
                     'ref_total_count': 0, 'alt_total_count': 0,
@@ -148,21 +133,19 @@ class GenerateCounts(object):
                     self.counter['no_bi_variant'] += 1
                     continue
                 # Add all allele counts for all biallelic variants
-                for bi_variant in bi_variants:
+                for bi in bi_variants:
                     # Get read allele
                     try:
-                        allele_index = bi_variant.alleles.index(
-                            bi_variant.read_allele
-                        )
+                        allele_index = bi.alleles.index(bi.read_allele)
                     except ValueError:
                         allele_index = None
                     # Add allele to counts
                     if allele_index is None:
-                        variant_metrics[bi_variant]['other_total_count'] += 1
+                        variant_metrics[bi.id]['other_total_count'] += 1
                     elif allele_index == 0:
-                        variant_metrics[bi_variant]['ref_total_count'] += 1
+                        variant_metrics[bi.id]['ref_total_count'] += 1
                     elif allele_index == 1:
-                        variant_metrics[bi_variant]['alt_total_count'] += 1
+                        variant_metrics[bi.id]['alt_total_count'] += 1
                 # Count and skip reads without biallelic heterozygous variants
                 bihet_variants = [
                     bv for bv in bi_variants if bv.is_heterozygous()
@@ -172,24 +155,22 @@ class GenerateCounts(object):
                     continue
                 # Count biallelic het read and select biallelic het variant
                 self.counter['bi_het_variant'] += 1
-                bihet_variant = random.choice(bihet_variants)
+                bihet = random.choice(bihet_variants)
                 # Select variant and match read allele to variant alleles
                 try:
-                    allele_index = bihet_variant.alleles.index(
-                        bihet_variant.read_allele
-                    )
+                    allele_index = bihet.alleles.index(bihet.read_allele)
                 except ValueError:
                     allele_index = None
                 # Count matches for selec
                 if allele_index is None:
                     self.counter['other'] += 1
-                    variant_metrics[bihet_variant]['other_as_count'] += 1
+                    variant_metrics[bihet.id]['other_as_count'] += 1
                 elif allele_index == 0:
                     self.counter['ref'] += 1
-                    variant_metrics[bihet_variant]['ref_as_count'] += 1
+                    variant_metrics[bihet.id]['ref_as_count'] += 1
                 elif allele_index == 1:
                     self.counter['alt'] += 1
-                    variant_metrics[bihet_variant]['alt_as_count'] += 1
+                    variant_metrics[bihet.id]['alt_as_count'] += 1
             # Print metrics to file
             self.write_metrics(
                 variant_metrics=variant_metrics, outfile=outfile
