@@ -112,15 +112,25 @@ class OutputWriter(object):
     def get_hetp(
         self, region_variants
     ):
-        # Get probabilities
+        # Adjust heterozygous probabilities or...
         if self.adjust_hetp:
-            # Adjust probabilites
-            hetp = [
-                self.calculate_posterior_hetp(
-                    prior=v.het_prob, ref=v.ref_total_count,
-                    alt=v.alt_total_count
-                ) for v in region_variants
-            ]
+            # Adjust probabilities using total allele counts
+            if self.adjust_hetp == 'total_counts':
+                hetp = [
+                    self.calculate_posterior_hetp(
+                        prior=v.het_prob, ref=v.ref_total_count,
+                        alt=v.alt_total_count
+                    ) for v in region_variants
+                ]
+            # Adjust probabilities using allele specific allele counts
+            elif self.adjust_hetp == 'as_counts':
+                hetp = [
+                    self.calculate_posterior_hetp(
+                        prior=v.het_prob, ref=v.ref_as_count,
+                        alt=v.alt_as_count
+                    ) for v in region_variants
+                ]
+        # Or get raw probabailities
         else:
             hetp = [v.het_prob for v in region_variants]
         # Convert output to string and return
@@ -222,29 +232,20 @@ if __name__ == "__main__":
         "should contain data for an identical set of variants."
     )
     parser.add_argument(
-        "--variants", required=True, help=(
-            "Input variant count file."
-        )
+        "--variants", required=True, help="Input variant count file."
     )
     parser.add_argument(
-        "--bam", required=True, help=(
-            "Input variant BAM file."
-        )
+        "--bam", required=True, help="Input variant BAM file."
     )
     parser.add_argument(
-        "--regions", required=True, help=(
-            "Input region file."
-        )
+        "--regions", required=True, help="Input region file."
     )
     parser.add_argument(
-        "--outfile", required=True, help=(
-            "Output file."
-        )
+        "--outfile", required=True, help="Output file."
     )
     parser.add_argument(
-        "--adjust_hetp", action='store_true', help=(
-            "Adjust heterozygous probabilities."
-        )
+        "--adjust_hetp", default=None, choices=['as_counts', 'total_counts'],
+        help="Adjust heterozygous probabilities."
     )
     args = parser.parse_args()
     # Open input file and output files
