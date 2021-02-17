@@ -193,10 +193,10 @@ class FilterVariants(object):
                 filter_counts.low_het += 1
                 continue
             # Skip test variants if minor allele count is too low
-            ref_count = sum([tv.ref_count for tv in test_variants])
-            alt_count = sum([tv.alt_count for tv in test_variants])
-            minor_count = min(ref_count, alt_count)
-            if minor_count < min_minor:
+            ref_as_count = sum([tv.ref_as_count for tv in test_variants])
+            alt_as_count = sum([tv.alt_as_count for tv in test_variants])
+            minor_as_count = min(ref_as_count, alt_as_count)
+            if minor_as_count < min_minor:
                 filter_counts.low_minor += 1
                 continue
             # Count passed variants and considered regions
