@@ -51,26 +51,22 @@ class VariantFunctions(object):
             return(False)
 
 
-_GenomeVariant = collections.namedtuple(
-    'GenomeVariant', ['alleles', 'id', 'genotype', 'probs']
-)
-
-
-class GenomeVariant(_GenomeVariant, VariantFunctions):
-
+class IntervalVariant(
+    VariantFunctions, collections.namedtuple(
+        'IntervalVariant', ['alleles', 'id', 'genotype', 'probs']
+    )
+):
     pass
 
 
-_OverlappingVariant = collections.namedtuple(
-    'OverlappingVariant', [
-        'chrom', 'start', 'end', 'alleles', 'id', 'genotype', 'probs',
-        'read_start', 'read_end', 'read_allele'
-    ]
-)
-
-
-class OverlappingVariant(_OverlappingVariant, VariantFunctions):
-
+class OverlappingVariant(
+    VariantFunctions, collections.namedtuple(
+        'OverlappingVariant', [
+            'chrom', 'start', 'end', 'alleles', 'id', 'genotype', 'probs',
+            'read_start', 'read_end', 'read_allele'
+        ]
+    )
+):
     pass
 
 
@@ -154,14 +150,14 @@ class VarTree(object):
             else:
                 variant_id = entry.id
             # Create intervaltree interval and add to list
-            new_variant = GenomeVariant(
+            interval_variant = IntervalVariant(
                 alleles=alleles, id=variant_id, genotype=genotype,
                 probs=probs
             )
-            new_interval = intervaltree.Interval(
-                entry.start, entry.stop, new_variant
+            interval = intervaltree.Interval(
+                entry.start, entry.stop, interval_variant
             )
-            interval_list.append(new_interval)
+            interval_list.append(interval)
         # Create intervaltree IntervalTree from list of intervals
         self.tree = intervaltree.IntervalTree(interval_list)
 
@@ -250,6 +246,7 @@ class VarTree(object):
                     if positions[i] is None:
                         assert(read_cigar[i] == '1')
                         positions[i] = positions[i - 1]
+                # Raise error for aligned bases with no positions
                 assert(None not in positions[read_align_start:read_align_end])
             # Loop through putative variant end get read variants
             for variant in overlapping_variants:
