@@ -80,7 +80,3 @@ Step 10:
 Generate variant metrics from the filtered and deduplicated BAM file using the
 script 'get_counts.py'. The count metrics file is bgzip compressed and tabix
 indexed
-
-complete documentation
-create test suite
-think about adding indel realignment
