@@ -383,13 +383,13 @@ class ProcessAlignments(object):
         """Checks if paired reads have conflicting alleles"""
         # Only process paired reads
         if self.bam_generator.paired:
-            common_variants = set(variant_list[0]).intersection(
-                set(variant_list[1])
-            )
+            # Loop through common variants
+            common_variants = set.intersection(*map(set, variant_list))
             for variant in common_variants:
-                var1 = variant_list[0][variant_list[0].index(variant)]
-                var2 = variant_list[1][variant_list[1].index(variant)]
-                if var1.read_allele != var2.read_allele:
+                # Check alleles match
+                v1 = variant_list[0][variant_list[0].index(variant)]
+                v2 = variant_list[1][variant_list[1].index(variant)]
+                if v1.read_allele != v2.read_allele:
                     return(True)
         return(False)
 
