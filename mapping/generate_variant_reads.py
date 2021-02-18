@@ -15,17 +15,18 @@ class BamGenerator():
         self.bam_path = bam
         self.min_mapq = min_mapq
         self.bam = pysam.AlignmentFile(self.bam_path)
-        # Check pairing
-        paired = [read.is_paired for read in self.bam.head(100)]
-        if any(paired):
-            assert(all(paired))
-            self.paired = True
-        else:
-            self.paired = False
-        # Get bam metrics
-        self.chromosomes = self.bam.references
-        self.total = self.bam.mapped + self.bam.unmapped
-        self.nocoordinate = self.bam.nocoordinate
+        # Open BAM file
+        with pysam.AlignmentFile(self.bam_path) as bam:
+            # Check pairing
+            paired = [read.is_paired for read in bam.head(100)]
+            if any(paired):
+                assert(all(paired))
+                self.paired = True
+            else:
+                self.paired = False
+            # Get genome and alignment metrics
+            self.index_statistics = bam.get_index_statistics()
+            self.nocoordinate = bam.nocoordinate
         # Create counter
         self.counter = {
             'total': 0,
@@ -39,67 +40,71 @@ class BamGenerator():
             'passed': 0
         }
 
-    def close(
-        self
-    ):
-        self.bam.close()
-
     def get_reads(
         self, chromosome
     ):
         # Create cache to store unfound reads
         read_pair_cache = {}
-        # Find reads properly mapped to the chromosome
-        for read in self.bam.fetch(contig=chromosome):
-            self.counter['total'] += 1
-            mapped_reads = None
-            # Count and skip secondary reads
-            if read.is_secondary:
-                self.counter['secondary'] += 1
-            # Count and skip supplementary reads
-            elif read.is_supplementary:
-                self.counter['supplementary'] += 1
-            # Count and skip unmapped reads
-            elif read.is_unmapped:
-                self.counter['unmapped'] += 1
-            # Store single reads for further filtering...
-            elif not self.paired:
-                assert(not read.is_paired)
-                mapped_reads = [read]
-            # or process paired to get read pairs
-            else:
-                # Count mate unmapped reads
-                if read.mate_is_unmapped:
+        # Open BAM file and loop though reads on chromosome
+        with pysam.AlignmentFile(self.bam_path) as bam:
+            for read in bam.fetch(contig=chromosome):
+                # Count total reads
+                self.counter['total'] += 1
+                # Count and skip secondary reads
+                if read.is_secondary:
+                    self.counter['secondary'] += 1
+                    continue
+                # Count and skip supplementary reads
+                if read.is_supplementary:
+                    self.counter['supplementary'] += 1
+                    continue
+                # Count and skip unmapped reads
+                if read.is_unmapped:
+                    self.counter['unmapped'] += 1
+                    continue
+                # Count and skip mate unmapped reads
+                if self.paired and read.mate_is_unmapped:
                     self.counter['mate_unmapped'] += 1
-                # Count reads whose mate is mapped to different chromosome
-                elif read.reference_id != read.next_reference_id:
+                    continue
+                # Count and skip mates mapped to different chromosome
+                if self.paired and read.reference_id != read.next_reference_id:
                     self.counter['different_chromosomes'] += 1
-                # Count reads in improper pairs
-                elif not read.is_proper_pair:
+                    continue
+                # Count and skip imporperly paired mates
+                if self.paired and not read.is_proper_pair:
                     self.counter['improper_pair'] += 1
-                # Get paired reads if mate has been cached...
-                elif read.query_name in read_pair_cache:
-                    cached_read = read_pair_cache.pop(read.query_name)
-                    if read.is_read1:
-                        assert(cached_read.is_read2)
-                        mapped_reads = [read, cached_read]
+                    continue
+                # Process reads passing initial filters
+                if self.paired:
+                    # Get paired reads if mate has been cached...
+                    if read.query_name in read_pair_cache:
+                        cached_read = read_pair_cache.pop(read.query_name)
+                        if read.is_read1:
+                            assert(cached_read.is_read2)
+                            mapped_reads = [read, cached_read]
+                        else:
+                            assert(cached_read.is_read1)
+                            assert(read.is_read2)
+                            mapped_reads = [cached_read, read]
+                    # or store first in pair
                     else:
-                        assert(cached_read.is_read1)
-                        assert(read.is_read2)
-                        mapped_reads = [cached_read, read]
-                # or store first in pair
+                        read_pair_cache[read.query_name] = read
+                        mapped_reads = []
+                # Process single end reads
                 else:
-                    read_pair_cache[read.query_name] = read
-            #  Further filter properly mapped reads
-            if mapped_reads is not None:
-                # Count and skip reads with low mapping quality
-                if any(
-                    [r.mapping_quality < self.min_mapq for r in mapped_reads]
-                ):
-                    self.counter['low_mapq'] += len(mapped_reads)
-                else:
-                    self.counter['passed'] += len(mapped_reads)
-                    yield(mapped_reads)
+                    assert(not read.is_paired)
+                    mapped_reads = [read]
+                # Further filter properly mapped reads
+                if mapped_reads:
+                    # Count and skip reads with low mapping quality
+                    low_mapq = [
+                        r.mapping_quality < self.min_mapq for r in mapped_reads
+                    ]
+                    if any(low_mapq):
+                        self.counter['low_mapq'] += len(mapped_reads)
+                    else:
+                        self.counter['passed'] += len(mapped_reads)
+                        yield(mapped_reads)
         # Check read pair cache is empty
         assert(len(read_pair_cache) == 0)
 
@@ -243,7 +248,7 @@ class CreateLog(object):
             '  secondary: {secondary}\n'
             '  supplementary: {supplementary} \n'
             '  unmapped: {unmapped} \n'
-            '  mate umapped: {mate_unmapped}\n'
+            '  mate unmapped: {mate_unmapped}\n'
             '  different chromosomes: {different_chromosomes}\n'
             '  improper pair: {improper_pair}\n'
             '  low mapping quality: {low_mapq}\n'
@@ -343,7 +348,6 @@ class ProcessAlignments(object):
         self
     ):
         # Close all open objects and files
-        self.bam_generator.close()
         self.outbam.close()
         self.fastq.close()
 
@@ -427,11 +431,14 @@ class ProcessAlignments(object):
             # Merge possible reference and alternative alleles
             for new_allele in variant.alleles:
                 for old_read in current_reads:
-                    # Skip identical alleles
+                    # Check old allele has been prserved
                     old_allele = old_read.sequence[
                         variant.read_start:variant.read_end
                     ]
                     assert(old_allele == variant.read_allele)
+                    # Skip matching alleles
+                    if new_allele == old_allele:
+                        continue
                     # Skip '*' marking deletions spanning variant position
                     if new_allele == '*':
                         continue
@@ -503,7 +510,14 @@ class ProcessAlignments(object):
         self
     ):
         # Get variants for each chromosome
-        for chromosome in self.bam_generator.chromosomes:
+        for chrom_stats in self.bam_generator.index_statistics:
+            # Get chromosome name and total mapped reads
+            chromosome = chrom_stats.contig
+            total_reads = chrom_stats.total
+            # Skip chromosomes without mapped reads
+            if total_reads == 0:
+                continue
+            # Extract variants for chromosome
             self.var_tree.read_vcf(chromosome)
             # Loop through reads on chromosome
             for read_list in self.bam_generator.get_reads(chromosome):
@@ -558,6 +572,7 @@ class ProcessAlignments(object):
                 # Count reads with excess variants and continue
                 if any([count > self.max_vars for count in variant_counts]):
                     self.counter['excess_variants'] += read_no
+                    print('here')
                     continue
                 # Count reads containing overlapping variants and continue
                 if self.variants_overlap(variant_list):
