@@ -397,18 +397,6 @@ class ProcessAlignments(object):
                     return(True)
         return(False)
 
-    def get_mean_quality(
-        self, read
-    ):
-        # Get qualities
-        aligned_base_qualities = read.query_qualities[
-            read.query_alignment_start:read.query_alignment_end
-        ]
-        mean_aligned_base_quality = (
-            sum(aligned_base_qualities) // len(aligned_base_qualities)
-        )
-        return(mean_aligned_base_quality)
-
     # Function generates allele flipped reads for supplied variants
     def generate_flipped_reads(
         self, read, read_variants
@@ -419,7 +407,6 @@ class ProcessAlignments(object):
             sequence=read.query_sequence, quality=list(read.query_qualities),
             edits={}
         )
-        mean_quality = self.get_mean_quality(read)
         # Create lists to store current and newly generated reads
         current_reads = [initial_read]
         new_reads = []
@@ -428,6 +415,7 @@ class ProcessAlignments(object):
             read_variants, key=lambda x: x.start, reverse=True
         )
         for variant in read_variants:
+            assert(variant.read_start < variant.read_end)
             # Merge possible reference and alternative alleles
             for new_allele in variant.alleles:
                 for old_read in current_reads:
@@ -448,10 +436,15 @@ class ProcessAlignments(object):
                         new_allele +
                         old_read.sequence[variant.read_end:]
                     )
-                    # Create new quality
+                    # Keeo same quality if length is identical or...
                     if len(old_allele) == len(new_allele):
                         new_quality = old_read.quality
+                    # generate new quality from mean
                     else:
+                        old_quality = old_read.quality[
+                            variant.read_start:variant.read_end
+                        ]
+                        mean_quality = sum(old_quality) // len(old_quality)
                         new_quality = (
                             old_read.quality[:variant.read_start] +
                             [mean_quality] * len(new_allele) +
@@ -572,7 +565,6 @@ class ProcessAlignments(object):
                 # Count reads with excess variants and continue
                 if any([count > self.max_vars for count in variant_counts]):
                     self.counter['excess_variants'] += read_no
-                    print('here')
                     continue
                 # Count reads containing overlapping variants and continue
                 if self.variants_overlap(variant_list):
@@ -592,25 +584,28 @@ class ProcessAlignments(object):
                 if self.too_short(flipped_list):
                     self.counter['too_short'] += len(read_list)
                     continue
-                # Process paired reads
+                # Process single end reads...
                 if read_no == 1:
-                    # Check read number if not excessive
+                    # Get new reads
                     new_reads = flipped_list[0]
+                    # Skip reads with excess flipped variants...
                     if len(new_reads) > self.max_seqs:
-                        self.counter['excess_reads'] += read_no
+                        self.counter['excess_reads'] += 1
                         continue
                     # Write paired reads to file
-                    self.counter['to_remap'] += read_no
+                    self.counter['to_remap'] += 1
                     self.fastq.write_fastq(
-                        read=read_list[0], new_reads=new_reads
+                        read=read_list[0], new_reads=flipped_list[0]
                     )
+                # or process paired end reads
                 else:
-                    # Get read pairs and check nor wxcessive
+                    # Get new read pairs
                     new_read_pairs = self.read_pair_combos(*flipped_list)
+                    # Skip reads rith excess flipped pairs...
                     if len(new_read_pairs) > self.max_seqs:
                         self.counter['excess_reads'] += read_no
                         continue
-                    # Write paired reads to file
+                    # write paired end reads to file
                     self.counter['to_remap'] += read_no
                     self.fastq.write_pair_fastq(
                         read1=read_list[0], read2=read_list[1],
