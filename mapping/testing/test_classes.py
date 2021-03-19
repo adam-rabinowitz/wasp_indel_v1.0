@@ -1,5 +1,6 @@
 import os
 import pysam
+import subprocess
 import unittest
 import yaml
 
@@ -80,8 +81,6 @@ class InputFiles(object):
         pysam.tabix_index(
             self.vcf_gzip, force=True, preset='vcf', index=self.tbi
         )
-        # Return indexed files
-        return(self.bam, self.vcf_gzip)
 
     def delete(self):
         for path in (
@@ -143,12 +142,35 @@ class OutputFiles(object):
 
 class TestGenerateVariantReads(unittest.TestCase):
 
+    maxDiff = None
+
     def setUp(self):
-        self.script = '../generate_variant_reads.py'
+        script = os.path.join(
+            os.path.dirname(__file__), os.pardir, 'generate_variant_reads.py'
+        )
+        self.script = os.path.realpath(script)
         self.prefix = 'unit_test'
         self.input = InputFiles(self.prefix)
         self.output = OutputFiles(self.prefix)
 
-    def tearDown(self):
-        self.input.delete()
+    def run_script(self, arguments):
+        # Prepare input
+        self.input.prepare_input()
+        # Create command
+        arguments = list(map(str, arguments))
+        command = [
+            'python', self.script, '--bam', self.input.bam, '--vcf',
+            self.input.vcf_gzip, '--out_prefix', self.input.prefix
+        ] + arguments
+        # Run command
+        try:
+            subprocess.check_call(command)
+        except subprocess.CalledProcessError:
+            print('\n' + ' '.join(command))
+            raise
+        finally:
+            self.input.delete()
+        # Extract, delete and return output
+        bam, fastq, log = self.output.parse_all()
         self.output.delete()
+        return(bam, fastq, log)

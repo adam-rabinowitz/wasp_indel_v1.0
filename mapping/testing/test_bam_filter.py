@@ -36,15 +36,12 @@ class TestAlignmentFilter(TestGenerateVariantReads):
             cigar='10M', flag=0, mapq=10
         )
         # Generate input files and run script
-        bam, vcf = self.input.prepare_input()
-        command = [
-            'python', 'generate_variant_reads.py', '--bam', bam, '--vcf',
-            vcf, '--out_prefix', self.prefix, '--min_mapq', 10, '--max_vars',
-            4, '--max_seqs', 8, '--min_len', 10
+        arguments = [
+            '--min_mapq', 10, '--max_vars', 4,
+            '--max_seqs', 8, '--min_len', 10
         ]
-        subprocess.check_call(list(map(str, command)))
+        log = self.run_script(arguments)[2]
         # Extract log file and check alignment filter
-        log = self.output.parse_log()
         align_filter = log['alignment filter']
         self.assertEqual(align_filter['unmapped'], 1)
         self.assertEqual(align_filter['secondary'], 1)
@@ -113,15 +110,12 @@ class TestAlignmentFilter(TestGenerateVariantReads):
             rnext='chr1', pnext=1, sequence='AAAAAAAAAA', quality='ABCDEFGHIJ'
         )
         # Generate input files and run script
-        bam, vcf = self.input.prepare_input()
-        command = [
-            'python', 'generate_variant_reads.py', '--bam', bam, '--vcf',
-            vcf, '--out_prefix', self.prefix, '--min_mapq', 10, '--max_vars',
-            4, '--max_seqs', 8, '--min_len', 10
+        arguments = [
+            '--min_mapq', 10, '--max_vars', 4,
+            '--max_seqs', 8, '--min_len', 10
         ]
-        subprocess.check_call(list(map(str, command)))
+        log = self.run_script(arguments)[2]
         # Extract log file and check alignment filter
-        log = self.output.parse_log()
         align_filter = log['alignment filter']
         self.assertEqual(align_filter['unmapped'], 1)
         self.assertEqual(align_filter['mate unmapped'], 1)
@@ -134,4 +128,4 @@ class TestAlignmentFilter(TestGenerateVariantReads):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(verbosity=2)
