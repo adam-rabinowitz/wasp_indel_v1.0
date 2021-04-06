@@ -1,32 +1,29 @@
 import argparse
 import collections
 import gzip
-import itertools
 import pysam
-import vartree
+# Import classes from modules
+from flipvar import FlipVar, HaplotypeError
+from vartree import VarTree, CigarError
 
 
 class BamGenerator():
 
-    def __init__(
-        self, bam, min_mapq
-    ):
+    def __init__(self, bam, min_mapq):
         # Store parameters and open BAM file
         self.bam_path = bam
-        self.min_mapq = min_mapq
         self.bam = pysam.AlignmentFile(self.bam_path)
-        # Open BAM file
-        with pysam.AlignmentFile(self.bam_path) as bam:
-            # Check pairing
-            paired = [read.is_paired for read in bam.head(100)]
-            if any(paired):
-                assert(all(paired))
-                self.paired = True
-            else:
-                self.paired = False
-            # Get genome and alignment metrics
-            self.index_statistics = bam.get_index_statistics()
-            self.nocoordinate = bam.nocoordinate
+        self.min_mapq = min_mapq
+        # Check pairing
+        paired = [read.is_paired for read in self.bam.head(100)]
+        if any(paired):
+            assert(all(paired))
+            self.paired = True
+        else:
+            self.paired = False
+        # Get genome and alignment metrics
+        self.index_statistics = self.bam.get_index_statistics()
+        self.nocoordinate = self.bam.nocoordinate
         # Create counter
         self.counter = {
             'total': 0,
@@ -40,197 +37,73 @@ class BamGenerator():
             'passed': 0
         }
 
-    def get_reads(
-        self, chromosome
-    ):
+    def close(self):
+        self.bam.close()
+
+    def get_reads(self, chromosome):
         # Create cache to store unfound reads
         read_pair_cache = {}
-        # Open BAM file and loop though reads on chromosome
-        with pysam.AlignmentFile(self.bam_path) as bam:
-            for read in bam.fetch(contig=chromosome):
-                # Count total reads
-                self.counter['total'] += 1
-                # Count and skip secondary reads
-                if read.is_secondary:
-                    self.counter['secondary'] += 1
-                    continue
-                # Count and skip supplementary reads
-                if read.is_supplementary:
-                    self.counter['supplementary'] += 1
-                    continue
-                # Count and skip unmapped reads
-                if read.is_unmapped:
-                    self.counter['unmapped'] += 1
-                    continue
-                # Count and skip mate unmapped reads
-                if self.paired and read.mate_is_unmapped:
-                    self.counter['mate_unmapped'] += 1
-                    continue
-                # Count and skip mates mapped to different chromosome
-                if self.paired and read.reference_id != read.next_reference_id:
-                    self.counter['different_chromosomes'] += 1
-                    continue
-                # Count and skip imporperly paired mates
-                if self.paired and not read.is_proper_pair:
-                    self.counter['improper_pair'] += 1
-                    continue
-                # Process reads passing initial filters
-                if self.paired:
-                    # Get paired reads if mate has been cached...
-                    if read.query_name in read_pair_cache:
-                        cached_read = read_pair_cache.pop(read.query_name)
-                        if read.is_read1:
-                            assert(cached_read.is_read2)
-                            mapped_reads = [read, cached_read]
-                        else:
-                            assert(cached_read.is_read1)
-                            assert(read.is_read2)
-                            mapped_reads = [cached_read, read]
-                    # or store first in pair
+        # Loop though reads on chromosome
+        for read in self.bam.fetch(contig=chromosome):
+            # Count total reads
+            self.counter['total'] += 1
+            # Count and skip secondary reads
+            if read.is_secondary:
+                self.counter['secondary'] += 1
+                continue
+            # Count and skip supplementary reads
+            if read.is_supplementary:
+                self.counter['supplementary'] += 1
+                continue
+            # Count and skip unmapped reads
+            if read.is_unmapped:
+                self.counter['unmapped'] += 1
+                continue
+            # Count and skip mate unmapped reads
+            if self.paired and read.mate_is_unmapped:
+                self.counter['mate_unmapped'] += 1
+                continue
+            # Count and skip mates mapped to different chromosome
+            if self.paired and read.reference_id != read.next_reference_id:
+                self.counter['different_chromosomes'] += 1
+                continue
+            # Count and skip imporperly paired mates
+            if self.paired and not read.is_proper_pair:
+                self.counter['improper_pair'] += 1
+                continue
+            # Process reads passing initial filters
+            if self.paired:
+                # Get paired reads if mate has been cached...
+                if read.query_name in read_pair_cache:
+                    cached_read = read_pair_cache.pop(read.query_name)
+                    if read.is_read1:
+                        assert(cached_read.is_read2)
+                        mapped_reads = [read, cached_read]
                     else:
-                        read_pair_cache[read.query_name] = read
-                        mapped_reads = []
-                # Process single end reads
+                        assert(cached_read.is_read1)
+                        assert(read.is_read2)
+                        mapped_reads = [cached_read, read]
+                # or store first in pair
                 else:
-                    assert(not read.is_paired)
-                    mapped_reads = [read]
-                # Further filter properly mapped reads
-                if mapped_reads:
-                    # Count and skip reads with low mapping quality
-                    low_mapq = [
-                        r.mapping_quality < self.min_mapq for r in mapped_reads
-                    ]
-                    if any(low_mapq):
-                        self.counter['low_mapq'] += len(mapped_reads)
-                    else:
-                        self.counter['passed'] += len(mapped_reads)
-                        yield(mapped_reads)
+                    read_pair_cache[read.query_name] = read
+                    mapped_reads = []
+            # Process single end reads
+            else:
+                assert(not read.is_paired)
+                mapped_reads = [read]
+            # Further filter properly mapped reads
+            if mapped_reads:
+                # Count and skip reads with low mapping quality
+                low_mapq = [
+                    r.mapping_quality < self.min_mapq for r in mapped_reads
+                ]
+                if any(low_mapq):
+                    self.counter['low_mapq'] += len(mapped_reads)
+                else:
+                    self.counter['passed'] += len(mapped_reads)
+                    yield(mapped_reads)
         # Check read pair cache is empty
         assert(len(read_pair_cache) == 0)
-
-
-class FastqWriter(object):
-
-    def __init__(
-        self, path, offset=33
-    ):
-        # Store variables
-        self.path = path
-        self.offset = offset
-        # Open output file
-        self.fastq = gzip.open(self.path, 'wt')
-
-    def close(
-        self
-    ):
-        self.fastq.close()
-
-    def rev_comp(
-        self, sequence
-    ):
-        # Reverse sequence and make complement
-        rev_sequence = sequence[::-1]
-        translation = rev_sequence.maketrans(
-            'ATCGMRWSYKNatcgmrwsykn',
-            'TAGCKYWSRMNtagckywsrmn'
-        )
-        revcomp_sequence = rev_sequence.translate(translation)
-        return(revcomp_sequence)
-
-    def quality_string(
-        self, quality, reverse
-    ):
-        # Convert to characters
-        if reverse:
-            characters = [chr(q + self.offset) for q in quality[::-1]]
-        else:
-            characters = [chr(q + self.offset) for q in quality]
-        # Join and return
-        quality_string = ''.join(characters)
-        return(quality_string)
-
-    def write_fastq(
-        self, read, new_reads
-    ):
-        # Check reads
-        assert(read.query_sequence == new_reads[0].sequence)
-        # Get read name
-        read_name = read.query_name
-        reference_id = read.reference_id
-        # Get position of original mapped reads and number of new reads
-        position = "{id}-{start}-{end}".format(
-            id=reference_id, start=read.reference_start,
-            end=read.reference_end
-        )
-        n_seq = len(new_reads)
-        # Process new reads sequentially
-        for i, new_read in enumerate(new_reads):
-            # Get new name
-            fastq_name = "{}.{}.{}.{:06d}".format(
-                read_name, position, n_seq, i
-            )
-            # Get new read sequence
-            if read.is_reverse:
-                fastq_seq = self.rev_comp(new_read.sequence)
-                fastq_qual = self.quality_string(
-                    new_read.quality, reverse=True
-                )
-            else:
-                fastq_seq = new_read.sequence
-                fastq_qual = self.quality_string(
-                    new_read.quality, reverse=False
-                )
-            assert(len(fastq_seq) == len(fastq_qual))
-            # Write read to file
-            fastq_entry = '@{name}\n{seq}\n+\n{quality}\n'.format(
-                name=fastq_name, seq=fastq_seq, quality=fastq_qual
-            )
-            self.fastq.write(fastq_entry)
-
-    def write_pair_fastq(
-        self, read1, read2, new_read_pairs
-    ):
-        # Check reads
-        assert(read1.is_read1 & read2.is_read2)
-        assert(read1.query_name == read2.query_name)
-        assert(read1.reference_id == read2.reference_id)
-        assert(read1.query_sequence == new_read_pairs[0][0].sequence)
-        assert(read2.query_sequence == new_read_pairs[0][1].sequence)
-        # Check name and reference id of original reads
-        read_name = read1.query_name
-        reference_id = read1.reference_id
-        # Get position of original mapped reads and number of new reads
-        position = "{id}-{start1}-{end1}-{start2}-{end2}".format(
-            id=reference_id, start1=read1.reference_start,
-            end1=read1.reference_end, start2=read2.reference_start,
-            end2=read2.reference_end
-        )
-        n_pair = len(new_read_pairs)
-        # Process new pairs sequentially
-        for i, (new_read1, new_read2) in enumerate(new_read_pairs):
-            # Generate read pair name
-            fastq_name = "{}.{}.{}.{:06d}".format(
-                read_name, position, n_pair, i
-            )
-            # Process each read in pair sequentially
-            for old_read, new_read in [(read1, new_read1), (read2, new_read2)]:
-                # Extract sequence and quality for read 1
-                if old_read.is_reverse:
-                    fastq_seq = self.rev_comp(new_read.sequence)
-                    fastq_qual = self.quality_string(
-                        new_read.quality, reverse=True
-                    )
-                else:
-                    fastq_seq = new_read.sequence
-                    fastq_qual = self.quality_string(
-                        new_read.quality, reverse=False
-                    )
-                assert(len(fastq_seq) == len(fastq_qual))
-                # Write fastq
-                fastq_entry = '@{name}\n{seq}\n+\n{quality}\n'.format(
-                    name=fastq_name, seq=fastq_seq, quality=fastq_qual
-                )
-                self.fastq.write(fastq_entry)
 
 
 class CreateLog(object):
@@ -267,10 +140,10 @@ class CreateLog(object):
         # Get allele count log
         allele_count_log = (
             'read allele counts:\n'
-            '  reference: {ref_count}\n'
-            '  alternative: {alt_count}\n'
-            '  other: {other_count}\n'
-        ).format(**variant_counts)
+            '  reference: {ref}\n'
+            '  alternative: {alt}\n'
+            '  other: {other}\n'
+        ).format(**variant_counts['alleles'])
         # Get variant filter log
         variant_filter_log = (
             'variant filter:\n'
@@ -278,6 +151,7 @@ class CreateLog(object):
             '  excess variants: {excess_variants}\n'
             '  overlapping variants: {overlapping_variants}\n'
             '  conflicting alleles: {conflicting_alleles}\n'
+            '  incomplete haplotype: {incomplete_haplotype}\n'
             '  truncated reads: {too_short}\n'
             '  excess reads: {excess_reads}\n'
             '  to remap: {to_remap}\n'
@@ -294,7 +168,7 @@ class ProcessAlignments(object):
 
     def __init__(
         self, bam, vcf, out_prefix, min_mapq, max_vars, max_seqs, min_len,
-        only_snv, only_biallelic
+        only_snv, only_biallelic, samples, check_phase
     ):
         # Store input parameters
         self.inbam_path = bam
@@ -306,19 +180,23 @@ class ProcessAlignments(object):
         self.min_len = min_len
         self.only_snv = only_snv
         self.only_biallelic = only_biallelic
+        self.samples = samples
+        self.check_phase = check_phase
         # Create output paths
         self.outbam_path = self.out_prefix + '.no_variants.bam'
         self.fastq_path = self.out_prefix + '.allele_flipped.fq.gz'
         self.log_path = self.out_prefix + '.first_alignment_log.txt'
-        # Initialise obejcts and open files
+        # Initialise objects and open files
         self.bam_generator = BamGenerator(
             self.inbam_path, min_mapq=self.min_mapq
         )
-        self.var_tree = vartree.VarTree(self.vcf_path)
+        self.vartree = VarTree(
+            self.vcf_path, samples=self.samples, check_phase=self.check_phase
+        )
         self.outbam = pysam.AlignmentFile(
             self.outbam_path, mode='wb', template=self.bam_generator.bam
         )
-        self.fastq = FastqWriter(self.fastq_path)
+        self.fastq = gzip.open(self.fastq_path, 'wt')
         self.log = CreateLog(self.log_path)
         # Create counter
         self.counter = {
@@ -328,176 +206,26 @@ class ProcessAlignments(object):
             'biallelic': 0,
             'snv': 0,
             'mixed': 0,
-            'ref_count': 0,
-            'alt_count': 0,
-            'other_count': 0,
             'unwanted_variants': 0,
             'excess_variants': 0,
             'overlapping_variants': 0,
             'conflicting_alleles': 0,
+            'incomplete_haplotype': 0,
             'too_short': 0,
             'excess_reads': 0,
-            'to_remap': 0
+            'to_remap': 0,
+            'alleles': collections.Counter(
+                {'ref': 0, 'alt': 0, 'other': 0}
+            )
         }
-        # Create named tuple to contain allele flipped reads
-        self.FlippedRead = collections.namedtuple(
-            'FlippedRead', ['sequence', 'quality', 'edits']
-        )
 
     def close(
         self
     ):
         # Close all open objects and files
+        self.bam_generator.close()
         self.outbam.close()
         self.fastq.close()
-
-    def count_ref_alt_matches(
-        self, variants
-    ):
-        ''' Function counts matches between read alleles and vcf alleles'''
-        # Loop through varaints and extract read allele
-        for variant in variants:
-            try:
-                allele_index = variant.alleles.index(variant.read_allele)
-            except ValueError:
-                allele_index = None
-            # Count match
-            if allele_index is None:
-                self.counter['other_count'] += 1
-            elif allele_index == 0:
-                self.counter['ref_count'] += 1
-            else:
-                self.counter['alt_count'] += 1
-
-    def variants_overlap(
-        self, variant_list
-    ):
-        '''Function checks if any variants overlap'''
-        for variants in variant_list:
-            start_position = 0
-            for variant in variants:
-                if variant.start < start_position:
-                    return(True)
-                start_position = variant.end
-        return(False)
-
-    def conflicting_alleles(
-        self, variant_list
-    ):
-        """Checks if paired reads have conflicting alleles"""
-        # Only process paired reads
-        if self.bam_generator.paired:
-            # Loop through common variants
-            common_variants = set.intersection(*map(set, variant_list))
-            for variant in common_variants:
-                # Check alleles match
-                v1 = variant_list[0][variant_list[0].index(variant)]
-                v2 = variant_list[1][variant_list[1].index(variant)]
-                if v1.read_allele != v2.read_allele:
-                    return(True)
-        return(False)
-
-    # Function generates allele flipped reads for supplied variants
-    def generate_flipped_reads(
-        self, read, read_variants
-    ):
-        """Generate set of reads with all possible combinations"""
-        # Create inital read and get mean base quality across aligned segment
-        initial_read = self.FlippedRead(
-            sequence=read.query_sequence, quality=list(read.query_qualities),
-            edits={}
-        )
-        # Create lists to store current and newly generated reads
-        current_reads = [initial_read]
-        new_reads = []
-        # Loop though variants end to start
-        read_variants = sorted(
-            read_variants, key=lambda x: x.start, reverse=True
-        )
-        for variant in read_variants:
-            assert(variant.read_start < variant.read_end)
-            # Merge possible reference and alternative alleles
-            for new_allele in variant.alleles:
-                for old_read in current_reads:
-                    # Check old allele has been prserved
-                    old_allele = old_read.sequence[
-                        variant.read_start:variant.read_end
-                    ]
-                    assert(old_allele == variant.read_allele)
-                    # Skip matching alleles
-                    if new_allele == old_allele:
-                        continue
-                    # Skip '*' marking deletions spanning variant position
-                    if new_allele == '*':
-                        continue
-                    # Create new sequence
-                    new_sequence = (
-                        old_read.sequence[:variant.read_start] +
-                        new_allele +
-                        old_read.sequence[variant.read_end:]
-                    )
-                    # Keeo same quality if length is identical or...
-                    if len(old_allele) == len(new_allele):
-                        new_quality = old_read.quality
-                    # generate new quality from mean
-                    else:
-                        old_quality = old_read.quality[
-                            variant.read_start:variant.read_end
-                        ]
-                        mean_quality = sum(old_quality) // len(old_quality)
-                        new_quality = (
-                            old_read.quality[:variant.read_start] +
-                            [mean_quality] * len(new_allele) +
-                            old_read.quality[variant.read_end:]
-                        )
-                    assert(len(new_sequence) == len(new_quality))
-                    # Create new edits
-                    new_edits = old_read.edits
-                    new_edits[variant.start] = new_allele
-                    # Store modified read
-                    new_read = self.FlippedRead(
-                        sequence=new_sequence, quality=new_quality,
-                        edits=new_edits
-                    )
-                    new_reads.append(new_read)
-            # update current reads with new read versions
-            current_reads.extend(new_reads)
-            new_reads = []
-        # Return all reads
-        return(current_reads)
-
-    def too_short(
-        self, flipped_list
-    ):
-        '''Determines if flipped reads are of sufficient length'''
-        for flipped_reads in flipped_list:
-            for read in flipped_reads:
-                if len(read.sequence) < self.min_len:
-                    return(True)
-        return(False)
-
-    def read_pair_combos(
-        self, read1_list, read2_list
-    ):
-        """Generate read pairs with matched edits"""
-        # Set output variables
-        pair_list = []
-        # Loop through all combinations of reads
-        for read1, read2 in itertools.product(read1_list, read2_list):
-            # Check alleles are identical across common positions
-            common = list(read1.edits.keys() & read2.edits.keys())
-            if len(common) > 0:
-                # Skip read pairs where common positions differ
-                read1_alleles = [read1.edits[c] for c in common]
-                read2_alleles = [read2.edits[c] for c in common]
-                if read1_alleles != read2_alleles:
-                    continue
-            # Add new alleles and check pait list length
-            pair_list.append((read1, read2))
-            if len(pair_list) > self.max_seqs:
-                break
-        # Return pair list and errors
-        return(pair_list)
 
     def filter_reads(
         self
@@ -511,106 +239,82 @@ class ProcessAlignments(object):
             if total_reads == 0:
                 continue
             # Extract variants for chromosome
-            self.var_tree.read_vcf(chromosome)
+            self.vartree.read_vcf(chromosome)
             # Loop through reads on chromosome
-            for read_list in self.bam_generator.get_reads(chromosome):
-                read_no = len(read_list)
+            for reads in self.bam_generator.get_reads(chromosome):
+                read_no = len(reads)
                 # Get variants for each read...
                 try:
-                    variant_list = [
-                        self.var_tree.get_read_variants(read, partial=True) for
-                        read in read_list
+                    variants = [
+                        self.vartree.get_read_variants(read, partial=True) for
+                        read in reads
                     ]
-                # or count abnormal alignments and continue
-                except AssertionError:
+                # ...or count abnormal alignments and continue
+                except CigarError:
                     self.counter['abnormal_alignment'] += read_no
                     continue
-                # Get variant types
-                variant_counts = [len(v) for v in variant_list]
-                total_variants = sum(variant_counts)
-                all_snv = all(
-                    [v.is_snv() for v in itertools.chain(*variant_list)]
-                )
-                all_biallelic = all(
-                    [v.is_biallelic() for v in itertools.chain(*variant_list)]
-                )
-                # Count variant types...
-                if total_variants > 0:
-                    if all_snv:
-                        if all_biallelic:
-                            self.counter['biallelic_snv'] += read_no
-                        else:
-                            self.counter['snv'] += read_no
-                    else:
-                        if all_biallelic:
-                            self.counter['biallelic'] += read_no
-                        else:
-                            self.counter['mixed'] += read_no
+                # Create object to flip reads
+                flipvar = FlipVar(reads, variants)
+                unique_variants = flipvar.get_unique_variants()
                 # Or save reads with no variants
-                else:
+                if not unique_variants:
                     self.counter['variants_absent'] += read_no
-                    for read in read_list:
+                    for read in reads:
                         self.outbam.write(read)
                     continue
-                # Count reference, alternative and other matches
-                for variants in variant_list:
-                    self.count_ref_alt_matches(variants)
-                # Count reads with unwanted variants
-                if not all_snv and self.only_snv:
+                # Update allele counts
+                self.counter['alleles'].update(flipvar.count_variant_alleles())
+                # Count variant types...
+                snv = all([v.is_snv() for v in unique_variants])
+                biallelic = all([v.is_biallelic() for v in unique_variants])
+                if snv:
+                    if biallelic:
+                        self.counter['biallelic_snv'] += read_no
+                    else:
+                        self.counter['snv'] += read_no
+                else:
+                    if biallelic:
+                        self.counter['biallelic'] += read_no
+                    else:
+                        self.counter['mixed'] += read_no
+                # Count reads with unwanted variants and continue
+                if not snv and self.only_snv:
                     self.counter['unwanted_variants'] += read_no
                     continue
-                if not all_biallelic and self.only_biallelic:
+                if not biallelic and self.only_biallelic:
                     self.counter['unwanted_variants'] += read_no
                     continue
                 # Count reads with excess variants and continue
-                if any([count > self.max_vars for count in variant_counts]):
+                if flipvar.max_variant_count() > self.max_vars:
                     self.counter['excess_variants'] += read_no
                     continue
                 # Count reads containing overlapping variants and continue
-                if self.variants_overlap(variant_list):
+                if flipvar.variants_overlap():
                     self.counter['overlapping_variants'] += read_no
                     continue
                 # Count paired reads with conflicting alleles and continue
-                if read_no == 2:
-                    if self.conflicting_alleles(variant_list):
-                        self.counter['conflicting_alleles'] += read_no
-                        continue
-                # Generate flipped reads
-                flipped_list = [
-                    self.generate_flipped_reads(read, variants) for
-                    read, variants in zip(read_list, variant_list)
-                ]
-                # Count reads with truncated flipped alleles and continue
-                if self.too_short(flipped_list):
-                    self.counter['too_short'] += len(read_list)
+                if flipvar.conflicting_alleles():
+                    self.counter['conflicting_alleles'] += read_no
                     continue
-                # Process single end reads...
-                if read_no == 1:
-                    # Get new reads
-                    new_reads = flipped_list[0]
-                    # Skip reads with excess flipped variants...
-                    if len(new_reads) > self.max_seqs:
-                        self.counter['excess_reads'] += 1
-                        continue
-                    # Write paired reads to file
-                    self.counter['to_remap'] += 1
-                    self.fastq.write_fastq(
-                        read=read_list[0], new_reads=flipped_list[0]
-                    )
-                # or process paired end reads
-                else:
-                    # Get new read pairs
-                    new_read_pairs = self.read_pair_combos(*flipped_list)
-                    # Skip reads rith excess flipped pairs...
-                    if len(new_read_pairs) > self.max_seqs:
-                        self.counter['excess_reads'] += read_no
-                        continue
-                    # write paired end reads to file
-                    self.counter['to_remap'] += read_no
-                    self.fastq.write_pair_fastq(
-                        read1=read_list[0], read2=read_list[1],
-                        new_read_pairs=new_read_pairs
-                    )
+                # Get flipped read haplotypes
+                try:
+                    flipvar.get_haplotypes(self.samples)
+                except HaplotypeError:
+                    self.counter['incomplete_haplotype'] += read_no
+                    continue
+                # Count flipped read haplotypes
+                if flipvar.count_haplotypes() > self.max_seqs:
+                    self.counter['excess_reads'] += read_no
+                    continue
+                # Generate flipped reads and check lengths
+                flipvar.generate_flipped_reads()
+                if flipvar.min_length() < self.min_len:
+                    self.counter['too_short'] += read_no
+                    continue
+                # Generate fastq and write to file
+                fastq_entry = flipvar.generate_fastq()
+                self.fastq.write(fastq_entry)
+                self.counter['to_remap'] += read_no
         # Get counts, adjust and write to file
         alignment_counts = self.bam_generator.counter
         alignment_counts['total'] += self.bam_generator.nocoordinate
@@ -675,21 +379,33 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         "--snv_only", action='store_true', help=(
-            "Discard reads overlapping non snv variants (deafult=False)."
+            "Discard reads overlapping non snv variants (default=False)."
         )
     )
     parser.add_argument(
         "--biallelic_only", action='store_true', help=(
-            "Discard reads overlapping non biallelic variants (deafult=False)."
+            "Discard reads overlapping non biallelic variants (default=False)."
+        )
+    )
+    parser.add_argument(
+        "--samples", nargs='+', help=(
+            "Sample names for generation of phased allele flipped reads."
+        )
+    )
+    parser.add_argument(
+        "--assume_phased", action='store_true', help=(
+            "Assume sample genotypes in VCF are phased (default=False)."
         )
     )
     args = parser.parse_args()
     # Run program
+    check_phase = not args.assume_phased
     process_alignments = ProcessAlignments(
         bam=args.bam, vcf=args.vcf, out_prefix=args.out_prefix,
         min_mapq=args.min_mapq, max_vars=args.max_vars, max_seqs=args.max_seqs,
         min_len=args.min_len, only_snv=args.snv_only,
-        only_biallelic=args.biallelic_only
+        only_biallelic=args.biallelic_only, samples=args.samples,
+        check_phase=check_phase
     )
     process_alignments.filter_reads()
     process_alignments.close()
