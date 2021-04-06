@@ -1,5 +1,5 @@
 import argparse
-import pysam
+from pysam import AlignmentFile  # pylint: disable=no-name-in-module
 
 
 class ReadStats:
@@ -101,8 +101,8 @@ def filter_bam_single(
     # Create object to collect read stats
     read_stats = ReadStats()
     # Open bam files
-    inbam = pysam.AlignmentFile(inpath)
-    outbam = pysam.AlignmentFile(outpath, 'wb', template=inbam)
+    inbam = AlignmentFile(inpath)
+    outbam = AlignmentFile(outpath, 'wb', template=inbam)
     # Loop through samples in bam file
     for name, reads in bam_generator(inbam):
         read_stats.total_reads += 1
@@ -163,8 +163,8 @@ def filter_bam_pairs(
     # Create object to collect read stats
     read_stats = ReadStats()
     # Open bam files
-    inbam = pysam.AlignmentFile(inpath)
-    outbam = pysam.AlignmentFile(outpath, 'wb', template=inbam)
+    inbam = AlignmentFile(inpath)
+    outbam = AlignmentFile(outpath, 'wb', template=inbam)
     # Loop through samples in bam file
     for name, reads in bam_generator(inbam):
         read_stats.total_reads += 2
@@ -271,11 +271,6 @@ if __name__ == "__main__":
         "'.filter_log.txt' -  text file containing read filtering metrics."
     )
     parser.add_argument(
-        "--paired_end", action='store_true', default=False, help=(
-            "Indicates that reads are paired-end (default is single)."
-        )
-    )
-    parser.add_argument(
         "--min_mapq", type=int, default=0, help=(
             "Minimum read mapping quality for remapped reads (default=0)."
         )
@@ -298,9 +293,17 @@ if __name__ == "__main__":
         )
     )
     args = parser.parse_args()
+    # Get BAM paiting
+    with AlignmentFile(args.bam) as bam:
+        paired = [read.is_paired for read in bam.head(100)]
+        if any(paired):
+            assert(all(paired))
+            paired = True
+        else:
+            paired = False
     # Filter reads
     out_bam = args.out_prefix + '.consistent.bam'
-    if args.paired_end:
+    if paired:
         read_stats = filter_bam_pairs(
             inpath=args.bam, outpath=out_bam, min_mapq=args.min_mapq,
             max_diff=args.wobble
