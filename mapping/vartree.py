@@ -1,20 +1,28 @@
 import bisect
 import collections
 import intervaltree
+import itertools
 import pysam
 import sys
 
 
-class VariantFunctions(object):
+class CigarError(Exception):
+    pass
 
-    def __hash__(
-        self
-    ):
+
+class Variant(
+    collections.namedtuple(
+        'Variant', [
+            'chrom', 'start', 'end', 'alleles', 'id', 'genotypes', 'probs',
+            'read_start', 'read_end', 'read_allele'
+        ]
+    )
+):
+
+    def __hash__(self):
         return(hash(self.id))
 
-    def __eq__(
-        self, other
-    ):
+    def __eq__(self, other):
         if (
             self.__class__ == other.__class__ and
             self.__hash__() == other.__hash__()
@@ -22,9 +30,7 @@ class VariantFunctions(object):
             return(True)
         return(False)
 
-    def __ne__(
-        self, other
-    ):
+    def __ne__(self, other):
         return(not self.__eq__(other))
 
     def is_snv(self):
@@ -38,82 +44,62 @@ class VariantFunctions(object):
             return(True)
         return(False)
 
-    def is_heterozygous(self):
-        genotypes = set(self.genotype)
+    def is_heterozygous(self, sample):
+        genotypes = set(self.genotypes[sample])
         if None not in genotypes and len(genotypes) == 2:
             return(True)
         return(False)
 
-    def is_biallelic_heterozygous(self):
-        if self.is_biallelic() and self.is_heterozygous():
+    def is_biallelic_heterozygous(self, sample):
+        if self.is_biallelic() and self.is_heterozygous(sample):
             return(True)
-        else:
-            return(False)
-
-
-class IntervalVariant(
-    VariantFunctions, collections.namedtuple(
-        'IntervalVariant', ['alleles', 'id', 'genotype', 'probs']
-    )
-):
-    pass
-
-
-class OverlappingVariant(
-    VariantFunctions, collections.namedtuple(
-        'OverlappingVariant', [
-            'chrom', 'start', 'end', 'alleles', 'id', 'genotype', 'probs',
-            'read_start', 'read_end', 'read_allele'
-        ]
-    )
-):
-    pass
+        return(False)
 
 
 class VarTree(object):
 
-    def __init__(self, path, sample=None):
+    def __init__(self, path, samples=None, check_phase=True):
         # Store initial arguments
         self.path = path
-        self.sample = sample
+        self.samples = samples if samples else []
+        self.check_phase = check_phase
         # Get vcf chromosomes and check samples
         with pysam.VariantFile(self.path) as vcf:
             self.chromosomes = list(vcf.header.contigs)
-            if self.sample:
-                assert(self.sample in list(vcf.header.samples))
-        # Set current chromosome
-        self.current_chromosome = None
+            for sample in self.samples:
+                assert(sample in list(vcf.header.samples))
         # Create allele regx
         self.ref_set = set(['A', 'C', 'G', 'T'])
         self.alt_set = set(['A', 'C', 'G', 'T', '*'])
-        # Create slot for tree
-        self.tree = None
+        # Create empty slots for variant data
+        self.current_chromosome = None
+        self.variant_tree = None
+        self.variants = None
 
     def read_vcf(self, chromosome):
         """read in SNPs and indels from text input file"""
-        # Set current chromosome
+        # Store chromosome and create variables to process data
         self.current_chromosome = chromosome
+        self.variants = []
+        intervals = []
+        variant_ids = set()
         # Create empty iterator for missing chromosomes or...
         if chromosome not in self.chromosomes:
-            sys.stderr.write(
-                "WARNING: chromosome {} not in VCF header\n".format(
-                    chromosome
-                )
-            )
+            warning = "WARNING: {} not in VCF header\n".format(chromosome)
+            sys.stderr.write(warning)
             vcf = None
             chrom_iter = []
-        # Create iterator without sample data or...
-        elif self.sample is None:
+        # ...create iterator with sample data or...
+        elif self.samples:
+            vcf = pysam.VariantFile(self.path, drop_samples=False)
+            vcf.subset_samples(self.samples)
+            chrom_iter = vcf.fetch(contig=chromosome)
+        # ...create iterator without sample data
+        else:
             vcf = pysam.VariantFile(self.path, drop_samples=True)
             chrom_iter = vcf.fetch(contig=chromosome)
-        # Create iterator for samples
-        else:
-            vcf = pysam.VariantFile(self.path, drop_samples=False)
-            vcf.subset_samples([self.sample])
-            chrom_iter = vcf.fetch(contig=chromosome)
-        # Read file and create list of intervaltree Intervals
-        interval_list = []
-        for entry in chrom_iter:
+        # Loop thorugh chromosome variants in vcf file
+        for index, entry in enumerate(chrom_iter):
             # Extract alleles and check
             alleles = entry.alleles
             for ref_base in alleles[0]:
@@ -121,27 +107,35 @@ class VarTree(object):
             for alt in alleles[1:]:
                 for alt_base in alt:
                     assert(alt_base in self.alt_set)
-            # Get genotype and associated probabilities
-            if self.sample:
-                # Get sample data and genotype
-                sample_data = entry.samples[self.sample]
-                genotype = sample_data['GT']
+            # Get genotype probabilities for samples
+            genotypes = {}
+            probs = {}
+            for sample in self.samples:
+                # Get sample data, check phase and get genotype
+                sample_data = entry.samples[sample]
+                if self.check_phase and not sample_data.phased:
+                    raise ValueError('unphased variant')
+                sample_genotype = sample_data['GT']
                 # Set probabilities to None if genotype unknown or...
-                if None in genotype:
-                    probs = None
+                if None in sample_genotype:
+                    sample_probs = (None,)
                 # Calculate probabilities
                 else:
                     if 'GL' in sample_data:
-                        raw_prob = [10 ** p for p in sample_data['GL']]
+                        sample_gl = sample_data['GL']
+                        raw_probs = [10 ** p for p in sample_gl]
                     elif 'PL' in sample_data:
-                        raw_prob = [10 ** (-p / 10) for p in sample_data['PL']]
+                        sample_pl = sample_data['PL']
+                        raw_probs = [10 ** (-p / 10) for p in sample_pl]
                     else:
                         raise KeyError('absent genotype probability')
                     # Normalise probability
-                    probs = tuple([p / sum(raw_prob) for p in raw_prob])
-            else:
-                genotype = None
-                probs = None
+                    sample_probs = tuple(
+                        [p / sum(raw_probs) for p in raw_probs]
+                    )
+                # Store genotype and probs
+                genotypes[sample] = sample_genotype
+                probs[sample] = sample_probs
             # Get variant id
             if entry.id is None:
                 variant_id = '{}_{}_{}'.format(
@@ -149,48 +143,76 @@ class VarTree(object):
                 )
             else:
                 variant_id = entry.id
+            # Check id is unique
+            assert(variant_id not in variant_ids)
+            variant_ids.add(variant_id)
+            # Create variant and add to list
+            variant = Variant(
+                chrom=chromosome, start=entry.start, end=entry.stop,
+                alleles=alleles, id=variant_id, genotypes=genotypes,
+                probs=probs, read_start=None, read_end=None,
+                read_allele=None
+            )
+            self.variants.append(variant)
             # Create intervaltree interval and add to list
-            interval_variant = IntervalVariant(
-                alleles=alleles, id=variant_id, genotype=genotype,
-                probs=probs
-            )
             interval = intervaltree.Interval(
-                entry.start, entry.stop, interval_variant
+                entry.start, entry.stop, index
             )
-            interval_list.append(interval)
+            intervals.append(interval)
         # Create intervaltree IntervalTree from list of intervals
-        self.tree = intervaltree.IntervalTree(interval_list)
+        self.tree = intervaltree.IntervalTree(intervals)
 
-    def get_overlapping_variants(self, start, end):
+    def get_variants(self, starts, ends):
         '''Retrieves variants overlapping the specified interval
 
         Parameters
         ----------
-        start: int
-            0-based interval start
-        end: int
-            0-based interval end
+        starts:
+            an iterator of 0-based interval starts
+        ends:
+            an iterator of 0-based interval ends
 
         Returns
         -------
         variants: list
-            A list of IndividualVariant object containing variant data
+            A list of unique IndividualVariant object containing variant data
         '''
-        # include intervals partially contained within interval or...
-        intervals = self.tree.overlap(start, end)
-        variants = [
-            OverlappingVariant(
-                chrom=self.current_chromosome, start=i.begin, end=i.end,
-                alleles=i.data.alleles, id=i.data.id, genotype=i.data.genotype,
-                probs=i.data.probs, read_start=None, read_end=None,
-                read_allele=None
-            ) for i in intervals
-        ]
+        # Get index of all variant overlapping data
+        indices = set()
+        for start, end in itertools.zip_longest(starts, ends):
+            for interval in self.tree.overlap(start, end):
+                indices.add(interval.data)
+        # Extract variant for each index
+        variants = [self.variants[i] for i in sorted(list(indices))]
         return(variants)
 
-    def get_read_variants(
-        self, read, partial
-    ):
+    def get_read_positions(self, read):
+        # Get initial positions
+        read_align_start = read.query_alignment_start
+        read_align_end = read.query_alignment_end
+        positions = read.get_reference_positions(full_length=True)
+        # Attempt to add positions where None is present
+        if None in positions[read_align_start:read_align_end]:
+            # Generate cigar covering aligned segment of read
+            cigar = ''.join([
+                str(operation) * length for
+                operation, length in read.cigartuples if
+                operation in (0, 1, 4, 6, 7, 8)
+            ])
+            assert(len(cigar) == len(positions))
+            # Check read begin and ends with a mtach position
+            aligned_cigar = cigar[read_align_start:read_align_end]
+            if aligned_cigar[0] != '0' or aligned_cigar[-1] != '0':
+                raise CigarError('cigar ends are not matches')
+            # Assign positions of insertion to previous bases
+            for i in range(read_align_start, read_align_end):
+                if positions[i] is None:
+                    assert(cigar[i] == '1')
+                    positions[i] = positions[i - 1]
+        # Return alignment positions
+        return(read_align_start, read_align_end, positions)
+
+    def get_read_variants(self, read, partial):
         '''Retrieves variants overlapping the supplied read
 
         Parameters
@@ -209,14 +231,8 @@ class VarTree(object):
         if not self.current_chromosome == read.reference_name:
             raise ValueError('mismatched chromosomes')
         # Get all variants
-        overlapping_variants = set()
-        for start, end in read.get_blocks():
-            for variant in self.get_overlapping_variants(start=start, end=end):
-                overlapping_variants.add(variant)
-        # Convert genomic variants into a list and sort
-        overlapping_variants = list(overlapping_variants)
-        overlapping_variants = sorted(
-            overlapping_variants, key=lambda x: x.start
+        overlapping_variants = self.get_variants(
+            *zip(*read.get_blocks())
         )
         # Filter partially overlapping start and end
         if not partial:
@@ -225,29 +241,13 @@ class VarTree(object):
                 ov.start >= read.reference_start and
                 ov.end <= read.reference_end
             ]
-        # Create read variants from genomic variants
+        # Add read data to variants
         read_variants = []
         if overlapping_variants:
-            # Extract read data
-            positions = read.get_reference_positions(full_length=True)
-            read_align_start = read.query_alignment_start
-            read_align_end = read.query_alignment_end
-            # Check all bases have assigned positions
-            if None in positions[read_align_start:read_align_end]:
-                # Generate cigar covering aligned segment of read
-                read_cigar = ''.join([
-                    str(operation) * length for
-                    operation, length in read.cigartuples if
-                    operation in (0, 1, 4, 6, 7, 8)
-                ])
-                assert(len(read_cigar) == len(positions))
-                # Assign positions of insertion to previous bases
-                for i in range(read_align_start, read_align_end):
-                    if positions[i] is None:
-                        assert(read_cigar[i] == '1')
-                        positions[i] = positions[i - 1]
-                # Raise error for aligned bases with no positions
-                assert(None not in positions[read_align_start:read_align_end])
+            # Get positions of bases
+            read_align_start, read_align_end, positions = (
+                self.get_read_positions(read)
+            )
             # Loop through putative variant end get read variants
             for variant in overlapping_variants:
                 # Add indices of variant within read
@@ -266,5 +266,5 @@ class VarTree(object):
                     read_allele=read_allele
                 )
                 read_variants.append(read_variant)
-        # Return errors and passed variants
+        # Return read variants
         return(read_variants)
