@@ -116,11 +116,11 @@ class OutputFiles(object):
         fastq_dict = {}
         with pysam.FastxFile(self.fastq) as fastq:
             for read in fastq:
-                name, location, total, count = read.name.split('.')
+                name, location = read.name.split('.')[0:2]
                 read_id = (name, location)
                 if read_id not in fastq_dict:
-                    fastq_dict[read_id] = [None] * int(total)
-                fastq_dict[read_id][int(count)] = (read.sequence, read.quality)
+                    fastq_dict[read_id] = set()
+                fastq_dict[read_id].add((read.sequence, read.quality))
         return(fastq_dict)
 
     def parse_log(self):
@@ -153,6 +153,9 @@ class TestGenerateVariantReads(unittest.TestCase):
         self.input = InputFiles(self.prefix)
         self.output = OutputFiles(self.prefix)
 
+    def tearDown(self):
+        self.output.delete()
+
     def run_script(self, arguments):
         # Prepare input
         self.input.prepare_input()
@@ -172,5 +175,4 @@ class TestGenerateVariantReads(unittest.TestCase):
             self.input.delete()
         # Extract, delete and return output
         bam, fastq, log = self.output.parse_all()
-        self.output.delete()
         return(bam, fastq, log)

@@ -1,11 +1,10 @@
-import subprocess
 import unittest
 from test_classes import TestGenerateVariantReads
 
 
 class TestAlignmentFilter(TestGenerateVariantReads):
 
-    def test_read_filter_se(self):
+    def test01_read_filter_se(self):
         # Add variant
         self.input.add_variant(
             name='V01', pos=5, ref='A', alt='T'
@@ -49,7 +48,7 @@ class TestAlignmentFilter(TestGenerateVariantReads):
         self.assertEqual(align_filter['low mapping quality'], 1)
         self.assertEqual(align_filter['passed'], 1)
 
-    def test_read_filter_pe(self):
+    def test02_read_filter_pe(self):
         # Add variant
         self.input.add_variant(
             name='V01', pos=5, ref='A', alt='T'
