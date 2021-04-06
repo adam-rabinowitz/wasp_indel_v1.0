@@ -18,7 +18,7 @@ class GenerateCounts(object):
         self.partial = partial
         # Create VarTree object and open bam file
         self.vartree = vartree.VarTree(
-            path=self.vcf_path, sample=self.sample
+            path=self.vcf_path, samples=[self.sample], check_phase=False
         )
         self.bam = pysam.AlignmentFile(self.bam_path)
         # Generate counter
@@ -77,33 +77,32 @@ class GenerateCounts(object):
         random.seed(42)
         # Loop through variants and create default values
         variant_metrics = collections.OrderedDict()
-        for interval in sorted(self.vartree.tree):
-            # Extract interval data
-            position = interval.begin + 1
-            variant = interval.data
+        for variant in self.vartree.variants:
             # Count and skip non-bial...
             if variant.is_biallelic():
                 # Set default values for missing genotype and probabilities...
-                if None in variant.genotype:
+                if None in variant.genotypes[self.sample]:
                     self.counter['no_haplotype'] += 1
                     haplotype = 'NA'
                     ref_prob, het_prob, alt_prob = 'NA', 'NA', 'NA'
                 # or extract and format genotype and probabilities
                 else:
                     # Count variant type
-                    if variant.is_heterozygous():
+                    if variant.is_heterozygous(self.sample):
                         self.counter['heterozygous'] += 1
                     else:
                         self.counter['homozygous'] += 1
                     # Process haplotype and allele probabilites
-                    haplotype = '|'.join(map(str, variant.genotype))
+                    haplotype = '|'.join(
+                        map(str, variant.genotypes[self.sample])
+                    )
                     ref_prob, het_prob, alt_prob = [
-                        '{:.2f}'.format(p) for p in variant.probs
+                        '{:.2f}'.format(p) for p in variant.probs[self.sample]
                     ]
                 # Add variant to dictionary
                 assert(variant.id not in variant_metrics)
                 variant_metrics[variant.id] = {
-                    'chromosome': chromosome, 'position': position,
+                    'chromosome': chromosome, 'position': variant.start + 1,
                     'id': variant.id, 'ref': variant.alleles[0],
                     'alts': ','.join(variant.alleles[1:]),
                     'haplotype': haplotype, 'ref_as_count': 0,
@@ -148,7 +147,7 @@ class GenerateCounts(object):
                         variant_metrics[bi.id]['alt_total_count'] += 1
                 # Count and skip reads without biallelic heterozygous variants
                 bihet_variants = [
-                    bv for bv in bi_variants if bv.is_heterozygous()
+                    bv for bv in bi_variants if bv.is_heterozygous(self.sample)
                 ]
                 if not bihet_variants:
                     self.counter['bi_nonhet_variant'] += 1
