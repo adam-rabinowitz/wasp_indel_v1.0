@@ -96,11 +96,10 @@ rule filter_second_alignment:
     params:
         script = config['wasp'] + '/filter_remapped_reads.py',
         prefix = config['out_prefix'],
-        paired = lambda wildcards, pair=pair: '--paired_end' if pair else '',
         mapq = config['min_mapq'],
         wobble = config['wobble']
     shell:
-        'python {params[script]} {params[paired]} --wobble {params[wobble]} '
+        'python {params[script]} --wobble {params[wobble]} '
         '--min_mapq {params[mapq]} {input} {params[prefix]}'
 
 # Merge all passed alignments
