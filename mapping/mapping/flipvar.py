@@ -2,10 +2,6 @@ import collections
 import itertools
 
 
-class HaplotypeError(Exception):
-    pass
-
-
 class FlipVar(object):
 
     def __init__(self, reads, variants, samples=None, offset=33):
@@ -32,6 +28,9 @@ class FlipVar(object):
             self.position.extend([read.reference_start, read.reference_end])
         # Extract variant data
         self.variants = variants
+        self.unique_variants = set(
+            itertools.chain.from_iterable(self.variants)
+        )
         self.common_variants = []
         if self.paired:
             for i1, variant in enumerate(variants[0]):
@@ -48,10 +47,6 @@ class FlipVar(object):
             'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'
         }
         self.offset = offset
-
-    def get_unique_variants(self):
-        unique_variants = set(itertools.chain.from_iterable(self.variants))
-        return(unique_variants)
 
     def max_variant_count(self):
         '''Get maximum number of variants overlapping a single read'''
@@ -88,12 +83,19 @@ class FlipVar(object):
                 allele_index = None
             # Count match
             if allele_index is None:
-                counts['other'] += 1
+                counts['other_allele'] += 1
             elif allele_index == 0:
-                counts['ref'] += 1
+                counts['ref_allele'] += 1
             else:
-                counts['alt'] += 1
+                counts['alt_allele'] += 1
         return(counts)
+
+    def incomplete_haplotype(self):
+        for variant in self.unique_variants:
+            for genotype in variant.genotypes.values():
+                if None in genotype:
+                    return(True)
+        return(False)
 
     def __get_sample_haplotypes(self, samples):
         # Loop through read variants and get read haplotypes
@@ -115,7 +117,7 @@ class FlipVar(object):
                 # Convert alleles to haplotypes
                 for sample_haplotype in itertools.zip_longest(*sample_alleles):
                     if None in sample_haplotype:
-                        raise HaplotypeError('missing alleles')
+                        raise ValueError('missing alleles')
                     read_haplotypes.add(sample_haplotype)
             # Store haplotypes
             read_haplotypes = list(read_haplotypes)
