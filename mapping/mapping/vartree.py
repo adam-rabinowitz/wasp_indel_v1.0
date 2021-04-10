@@ -6,10 +6,6 @@ import pysam
 import sys
 
 
-class CigarError(Exception):
-    pass
-
-
 class Variant(
     collections.namedtuple(
         'Variant', [
@@ -47,6 +43,11 @@ class Variant(
     def is_heterozygous(self, sample):
         genotypes = set(self.genotypes[sample])
         if None not in genotypes and len(genotypes) == 2:
+            return(True)
+        return(False)
+
+    def is_biallelic_snv(self):
+        if self.is_biallelic() and self.is_snv():
             return(True)
         return(False)
 
@@ -197,18 +198,20 @@ class VarTree(object):
             cigar = ''.join([
                 str(operation) * length for
                 operation, length in read.cigartuples if
-                operation in (0, 1, 4, 6, 7, 8)
+                operation in (0, 1, 4, 7, 8)
             ])
             assert(len(cigar) == len(positions))
-            # Check read begin and ends with a mtach position
-            aligned_cigar = cigar[read_align_start:read_align_end]
-            if aligned_cigar[0] != '0' or aligned_cigar[-1] != '0':
-                raise CigarError('cigar ends are not matches')
             # Assign positions of insertion to previous bases
             for i in range(read_align_start, read_align_end):
                 if positions[i] is None:
                     assert(cigar[i] == '1')
                     positions[i] = positions[i - 1]
+        # Check all positions have now been assigned
+        if None in positions[read_align_start:read_align_end]:
+            message = 'Abnormal Alignment: {} {}'.format(
+                read.query_name, read.cigarstring
+            )
+            raise ValueError(message)
         # Return alignment positions
         return(read_align_start, read_align_end, positions)
 
