@@ -105,7 +105,11 @@ class FirstBamGenerator():
                     self.counts['passed_align'] += len(mapped_reads)
                     yield(mapped_reads)
         # Check read pair cache is empty
-        assert(len(read_pair_cache) == 0)
+        if read_pair_cache:
+            message = '{} contains {} unpaired reads'.format(
+                chromosome, len(read_pair_cache)
+            )
+            raise ValueError(message)
 
     def close(self):
         self.bam.close()
