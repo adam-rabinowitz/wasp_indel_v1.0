@@ -103,15 +103,39 @@ class FlipAlleles(object):
                     bam_dict[read.query_name] = 1
         return(bam_dict)
 
-    def parse_fastq(self):
+    def parse_fastq(self, paired):
         fastq_dict = {}
+        cached_read = None
         with pysam.FastxFile(self.out_fastq) as fastq:
-            for read in fastq:
-                name, location = read.name.split('.')[0:2]
-                read_id = (name, location)
+            for i, read in enumerate(fastq):
+                # Process paired end read
+                if paired:
+                    # Store first read in pair and continue
+                    if i % 2 == 0:
+                        cached_read = read
+                        continue
+                    # Extract data for second read in pair
+                    else:
+                        read1, read2 = cached_read, read
+                        assert(read1.name == read2.name)
+                        chached_read = None
+                        # Extract read data
+                        name, location = read1.name.split('.')[0:2]
+                        read_id = (name, location)
+                        read_data = (
+                            (read1.sequence, read1.quality),
+                            (read2.sequence, read2.quality)
+                        )
+                # Process signle end read
+                else:
+                    # Extract data for unpaired read
+                    name, location = read.name.split('.')[0:2]
+                    read_id = (name, location)
+                    read_data = (read.sequence, read.quality)
+                # Store read data
                 if read_id not in fastq_dict:
                     fastq_dict[read_id] = set()
-                fastq_dict[read_id].add((read.sequence, read.quality))
+                fastq_dict[read_id].add(read_data)
         return(fastq_dict)
 
     def parse_log(self):
@@ -119,13 +143,13 @@ class FlipAlleles(object):
             log_dict = yaml.safe_load(log)
         return(log_dict)
 
-    def parse_all(self):
+    def parse_all(self, paired):
         bam_dict = self.parse_bam()
-        fastq_dict = self.parse_fastq()
+        fastq_dict = self.parse_fastq(paired=paired)
         log_dict = self.parse_log()
         return(bam_dict, fastq_dict, log_dict)
 
-    def run_script(self, arguments):
+    def run_script(self, arguments, paired=False):
         # Prepare input
         self.prepare_input()
         # Create command
@@ -141,7 +165,7 @@ class FlipAlleles(object):
             print('\n' + ' '.join(command))
             raise
         # Parse and return files
-        return(self.parse_all())
+        return(self.parse_all(paired=paired))
 
     def delete(self):
         for path in (
