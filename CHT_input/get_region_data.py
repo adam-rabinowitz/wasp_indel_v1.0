@@ -144,7 +144,7 @@ class OutputWriter(object):
         assert(test_variant.haplotype in self.haplotypes)
         assert(len(region_variants) > 0)
         # Process heterozygotic test variants...
-        if test_variant in self.heterozygotes:
+        if test_variant.haplotype in self.heterozygotes:
             # Set zero counts
             ref_hap_counts = []
             alt_hap_counts = []
