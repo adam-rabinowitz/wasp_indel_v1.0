@@ -3,7 +3,7 @@ import collections
 import os
 import pysam
 import random
-import vartree
+from mapping.vartree import VarTree
 
 
 class GenerateCounts(object):
@@ -17,7 +17,7 @@ class GenerateCounts(object):
         self.sample = sample
         self.partial = partial
         # Create VarTree object and open bam file
-        self.vartree = vartree.VarTree(
+        self.vartree = VarTree(
             path=self.vcf_path, samples=[self.sample], check_phase=False
         )
         self.bam = pysam.AlignmentFile(self.bam_path)
