@@ -33,7 +33,7 @@ class Log(object):
             secondary_align=self.counts['secondary_align'],
             supplementary_align=self.counts['supplementary_align'],
             unmapped_align=self.counts['unmapped_align'],
-            mate_unmapped_align=self.counts['mate_unampped_align'],
+            mate_unmapped_align=self.counts['mate_unmapped_align'],
             different_chrom_align=self.counts['different_chrom_align'],
             improper_pair_align=self.counts['improper_pair_align'],
             low_mapq_align=self.counts['low_mapq_align'],
@@ -208,8 +208,8 @@ class ProcessAlignments(object):
                 self.log.counts['to_remap'] += read_no
         # Get alignment counts
         alignment_counts = self.bam_generator.counts
-        alignment_counts['total'] += self.bam_generator.nocoordinate
-        alignment_counts['unmapped'] += self.bam_generator.nocoordinate
+        alignment_counts['total_align'] += self.bam_generator.nocoordinate
+        alignment_counts['unmapped_align'] += self.bam_generator.nocoordinate
         # Add alignment counts to counter and write to file
         self.log.counts.update(alignment_counts)
         self.log.write_counts()
