@@ -6,8 +6,6 @@ fastq:
     - "/Users/rabinowi/wasp/test_data/fastq/399_1012h_bin_rep1.2.fq.gz"
 # Genome fasta file. Should be indexed with BWA  
 fasta: "/Users/rabinowi/wasp/test_data/genome/dm6.fa"
-# Read group string to add to alignment file
-read_group: "@RG\\tID:1\\tSM:399_1012h_bin\\tPL:ILLUMINA\\tLB:1"
 # Minimum mapping quality
 min_mapq: 10
 # A sorted, tabix indexed, VCF file containing variants
@@ -18,5 +16,3 @@ out_prefix: "/Users/rabinowi/wasp/test_data/alignments/paired_end"
 wobble: 0
 # Sample for which to extract genotype data from VCF
 sample: 'vgn'
-# Size of window around variant for which to collect read counts
-window: 200
