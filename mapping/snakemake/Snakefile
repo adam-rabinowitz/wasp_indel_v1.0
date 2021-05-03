@@ -1,5 +1,3 @@
-configfile: 'snakemake_config.yml'
-
 # Get read pairing
 if len(config['fastq']) == 1:
     pair = False
@@ -27,10 +25,9 @@ rule first_alignment:
     output:
         temp(config['out_prefix'] + '.initial.sam')
     params:
-        fasta = config['fasta'],
-        rg = config['read_group']
+        fasta = config['fasta']
     shell:
-        'bwa mem -R "{params[rg]}" {params[fasta]} {input} > {output}'
+        'bwa mem -M {params[fasta]} {input} > {output}'
 
 # Convert initial alignment to coordinate sorted BAM file
 rule sort_first_alignment:
@@ -70,10 +67,9 @@ rule second_alignment:
         temp(config['out_prefix'] + '.allele_flipped.sam')
     params:
         fasta = config['fasta'],
-        rg = config['read_group'],
         paired = lambda wildcards, pair=pair: '-p' if pair else ''
     shell:
-        'bwa mem -M -R "{params[rg]}" {params[paired]} {params[fasta]} {input} > '
+        'bwa mem -M {params[paired]} {params[fasta]} {input} > '
         '{output}'
 
 # Sort second alignment by read name
