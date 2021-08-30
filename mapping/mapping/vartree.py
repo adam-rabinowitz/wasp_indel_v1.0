@@ -84,7 +84,6 @@ class VarTree(object):
         self.variants = []
         intervals = []
         variant_ids = set()
-        entry_index = 0
         # Create empty iterator for missing chromosomes or...
         if chromosome not in self.chromosomes:
             warning = "WARNING: {} not in VCF header\n".format(chromosome)
@@ -101,7 +100,7 @@ class VarTree(object):
             vcf = pysam.VariantFile(self.path, drop_samples=True)
             chrom_iter = vcf.fetch(contig=chromosome)
         # Loop thorugh chromosome variants in vcf file
-        for entry in chrom_iter:
+        for entry_index, entry in enumerate(chrom_iter):
             # Extract alleles and check bases
             alleles = entry.alleles
             for ref_base in alleles[0]:
@@ -109,16 +108,6 @@ class VarTree(object):
             for alt in alleles[1:]:
                 for alt_base in alt:
                     assert(alt_base in self.alt_set)
-            # Check for non reference bases
-            if self.samples:
-                # Get allele indices for all genotypes
-                gt_values = [
-                    allele_index for sample in self.samples
-                    for allele_index in entry.samples[sample]['GT']
-                ]
-                # Skip variants where all alleles are reference
-                if (max(gt_values) == 0):
-                    continue
             # Get genotype probabilities for samples
             genotypes = {}
             probs = {}
@@ -172,10 +161,7 @@ class VarTree(object):
                 entry.start, entry.stop, entry_index
             )
             intervals.append(interval)
-            # Increase index
-            entry_index += 1
         # Create intervaltree IntervalTree from list of intervals
-        assert(len(self.variants) == entry_index)
         self.tree = intervaltree.IntervalTree(intervals)
 
     def get_variants(self, starts, ends):
