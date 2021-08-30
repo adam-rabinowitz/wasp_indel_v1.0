@@ -78,16 +78,16 @@ class IndividualVariant(VariantTuple):
         )
         # Calculate adjusted heterozygous possibility
         if het_prob is not None and adjhetprob is not None:
-            if adjhetprob == 'as':
+            if adjhetprob == 'as_counts':
                 het_prob = calculate_posterior_hetp(
                     het_prob, ref=ref_as_count, alt=alt_as_count
                 )
-            elif adjhetprob == 'total':
+            elif adjhetprob == 'total_counts':
                 het_prob = calculate_posterior_hetp(
                     het_prob, ref=ref_total_count, alt=alt_total_count
                 )
             else:
-                raise ValueError('adjhetprob variable not recognised')
+                raise ValueError('adjhetprob value not recognised')
         # Generate hash
         new_variant = cls(
             chrom=chrom, start=start, end=end, id=id, ref=ref, alt=alt,
@@ -154,14 +154,15 @@ class CountTree(object):
             raise ValueError('input must be sorted by chromosome')
         self.previous_chromosomes.append(chromosome)
         self.current_chromosome = chromosome
+        # Open count file
+        count_file = pysam.TabixFile(self.path)
         # Create empty iterator for missing chromosomes or...
         if chromosome not in self.chromosomes:
             warning = "WARNING: {} not in VCF header\n".format(chromosome)
             sys.stderr.write(warning)
             chrom_iter = []
-        # ...create iterator without sample data
+        # ...create iterator for cheomosome
         else:
-            count_file = pysam.TabixFile(self.path)
             chrom_iter = count_file.fetch(reference=chromosome)
         # Set variables to process data
         self.variants = []
@@ -178,6 +179,8 @@ class CountTree(object):
                 variant.start, variant.end, index
             )
             intervals.append(interval)
+        # Close count file
+        count_file.close()
         # Create intervaltree IntervalTree from list of intervals
         self.tree = intervaltree.IntervalTree(intervals)
 
@@ -289,14 +292,14 @@ class CountTree(object):
             self.test_variants[test_tuple] = test_str
         return(test_str)
 
-    def generate_region_string(self, test_haplotype, starts, ends):
+    def generate_region_string(self, target_haplotype, starts, ends):
         '''Will retreive variants overlapping the specified interval and format
         them into a string suitable for insertion into a CHT input file
 
         Parameters
         ----------
-        test_haplotype:
-            haplotype of the test snp (one of 0|0, 0|1, 1|0 or 1|1)
+        target_haplotype:
+            haplotype of the target variant (one of 0|0, 0|1, 1|0 or 1|1)
         starts:
             an iterator of 0-based interval starts
         ends:
@@ -308,11 +311,11 @@ class CountTree(object):
             A list of unique IndividualVariant object containing variant data
         '''
         # Check arguments
-        assert(test_haplotype in self.haplotypes)
+        assert(target_haplotype in self.haplotypes)
         # Get region variants
         region_variants = self.get_variants(starts, ends)
         # Process heterozygotic test variants...
-        if test_haplotype in self.heterozygotes:
+        if target_haplotype in self.heterozygotes:
             # Set zero counts
             ref_hap_counts = []
             alt_hap_counts = []
@@ -322,7 +325,7 @@ class CountTree(object):
                 assert(variant.haplotype in self.haplotypes)
                 # Extract counts for heterozygotic variants...
                 if variant.haplotype in self.heterozygotes:
-                    if variant.haplotype == test_haplotype:
+                    if variant.haplotype == target_haplotype:
                         ref_hap_counts.append(variant.ref_as_count)
                         alt_hap_counts.append(variant.alt_as_count)
                         other_hap_counts.append(variant.other_as_count)
@@ -359,15 +362,15 @@ class CountTree(object):
         region_str = ' '.join(region_list)
         return(region_str)
 
-    def get_region_string(self, test_haplotype, starts, ends):
+    def get_region_string(self, target_haplotype, starts, ends):
         '''Will retreive region string if test haplotype and region have been
         observed previously or will generate and store region string if test
         haplotype and region are novel.
 
         Parameters
         ----------
-        test_haplotype:
-            haplotype of the test snp (one of 0|0, 0|1, 1|0 or 1|1)
+        target_haplotype:
+            haplotype of the target varaint (one of 0|0, 0|1, 1|0 or 1|1)
         starts:
             an iterator of 0-based interval starts
         ends:
@@ -379,14 +382,14 @@ class CountTree(object):
             A list of unique IndividualVariant object containing variant data
         '''
         # Generate region tuple
-        region_tuple = (test_haplotype, tuple(starts), tuple(ends))
+        region_tuple = (target_haplotype, tuple(starts), tuple(ends))
         # Extract region string if tuple has been observed previously...
         if region_tuple in self.region_variants:
             region_str = self.region_variants[region_tuple]
         # or generate and store region string if tuple is novel
         else:
             region_str = self.generate_region_string(
-                test_haplotype=test_haplotype, starts=starts, ends=ends
+                target_haplotype=target_haplotype, starts=starts, ends=ends
             )
             self.region_variants[region_tuple] = region_str
         # Return str
@@ -407,9 +410,9 @@ class BamCounts(object):
             chrom_len = self.bam_file.get_reference_length(chrom)
             self.chrom_lengths[chrom] = chrom_len
         # Generate variable to store counts
-        self.region_counts = {}
+        self.read_counts = {}
 
-    def generate_count_string(self, chrom, starts, ends):
+    def generate_read_string(self, chrom, starts, ends):
         counts = 0
         for start, end in zip(starts, ends):
             counts += self.bam_file.count(chrom, start, end)
@@ -417,40 +420,40 @@ class BamCounts(object):
             str(counts),
             str(self.total)
         ]
-        count_str = ' '.join(count_list)
-        return(count_str)
+        read_str = ' '.join(count_list)
+        return(read_str)
 
-    def get_count_string(self, chrom, starts, ends):
+    def get_read_string(self, chrom, starts, ends):
         # Generate region tuple
         region_tuple = (chrom, tuple(starts), tuple(ends))
-        if region_tuple in self.region_counts:
-            region_str = self.region_counts[region_tuple]
+        if region_tuple in self.read_counts:
+            read_str = self.read_counts[region_tuple]
         else:
-            region_str = self.generate_count_string(
+            read_str = self.generate_read_string(
                 chrom=chrom, starts=starts, ends=ends
             )
-            self.region_counts[region_tuple] = region_str
-        return(region_str)
+            self.read_counts[region_tuple] = read_str
+        return(read_str)
 
     def close(self):
         self.bam_file.close()
 
 
-x = CountTree(
-    '/Users/rabinowi/wasp/test_data/alignments/paired_end.variant_counts.txt.gz',
-    adjhetprob='total'
-)
-x.read_counts('chr4')
-region_str = x.get_region_string('0|1', [0], [1000])
-print(region_str)
-region_str = x.get_region_string('0|1', [0], [1000])
-print(region_str)
-test_str = x.get_test_string(337, 400, 'T', 'A')
-print(test_str)
-test_str = x.get_test_string(337, 400, 'T', 'A')
-print(test_str)
-y = BamCounts(
-    '/Users/rabinowi/wasp/test_data/alignments/paired_end.filtered.rmdup.bam'
-)
-bam_str = y.get_count_string('chr2L', (0,), (10000,))
-print(bam_str)
+# x = CountTree(
+#     '/Users/rabinowi/wasp/test_data/alignments/paired_end.variant_counts.txt.gz',
+#     adjhetprob='total'
+# )
+# x.read_counts('chr4')
+# region_str = x.get_region_string('0|1', [0], [1000])
+# print(region_str)
+# region_str = x.get_region_string('0|1', [0], [1000])
+# print(region_str)
+# test_str = x.get_test_string(337, 400, 'T', 'A')
+# print(test_str)
+# test_str = x.get_test_string(337, 400, 'T', 'A')
+# print(test_str)
+# y = BamCounts(
+#     '/Users/rabinowi/wasp/test_data/alignments/paired_end.filtered.rmdup.bam'
+# )
+# bam_str = y.get_count_string('chr2L', (0,), (10000,))
+# print(bam_str)
