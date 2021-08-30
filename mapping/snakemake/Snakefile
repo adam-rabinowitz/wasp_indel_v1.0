@@ -38,7 +38,8 @@ rule sort_first_alignment:
         bai = temp(config['out_prefix'] + '.initial.bai')
     shell:
         'picard SortSam -I {input} -O {output.bam} -SO coordinate '
-        '--CREATE_INDEX true'
+        '--CREATE_INDEX true --USE_JDK_DEFLATER true '
+        '--USE_JDK_INFLATER true'
 
 # Place alignments not overlapping variants in a BAM file and extract reads
 # overlapping variants, and their allele flipped versions, to a fastq file.
@@ -79,7 +80,8 @@ rule sort_second_alignment:
     output:
         temp(config['out_prefix'] + '.allele_flipped.bam')
     shell:
-        'picard SortSam -I {input} -O {output} -SO queryname'
+        'picard SortSam -I {input} -O {output} -SO queryname '
+        '--USE_JDK_DEFLATER true --USE_JDK_INFLATER true'
 
 # Extract reads for which the original and allele flipped version align
 # to the same location
@@ -132,7 +134,7 @@ rule randomly_remove_duplicates:
         'picard MarkDuplicates -I {input.bam} -M {output.log} -O {output.bam} '
         '--ASSUME_SORTED --DUPLICATE_SCORING_STRATEGY RANDOM '
         '--REMOVE_DUPLICATES true --REMOVE_SEQUENCING_DUPLICATES true '
-        '--CREATE_INDEX true'
+        '--CREATE_INDEX true --USE_JDK_DEFLATER true --USE_JDK_INFLATER true'
 
 # Variant counts
 rule get_counts:
