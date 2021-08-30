@@ -307,8 +307,8 @@ if __name__ == "__main__":
     # Create argument parser
     parser = argparse.ArgumentParser(
         description="This program generates target regions for subsequent "
-        "analysis using the CHT test. The input count files should be "
-        "generated using the 'get_counts.py' script and each count file "
+        "analysis using the CHT test. The input variant count files should "
+        "be generated using the 'get_counts.py' script and each file "
         "should contain data for an identical set of variants."
     )
     parser.add_argument(
@@ -340,14 +340,14 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--min_as_reads", required=True, type=int, help=(
-            "Minimum total number of allele-specific reads in window "
-            "around test variant across all individuals."
+            "Minimum total number of allele-specific reads in region "
+            "associated to test variant across all individuals."
         )
     )
     parser.add_argument(
         "--min_total_reads", required=True, type=int, help=(
-            "Minimum total number of reads in window around test variant "
-            "across all individuals."
+            "Minimum total number of reads in region associated to test "
+            "variant across all individuals."
         )
     )
     group = parser.add_mutually_exclusive_group(required=True)
