@@ -131,7 +131,8 @@ rule randomly_remove_duplicates:
     shell:
         'picard MarkDuplicates -I {input.bam} -M {output.log} -O {output.bam} '
         '--ASSUME_SORTED --DUPLICATE_SCORING_STRATEGY RANDOM '
-        '--REMOVE_DUPLICATES true --CREATE_INDEX true'
+        '--REMOVE_DUPLICATES true --REMOVE_SEQUENCING_DUPLICATES true '
+        '--CREATE_INDEX true'
 
 # Variant counts
 rule get_counts:
