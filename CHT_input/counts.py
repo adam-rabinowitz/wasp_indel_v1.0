@@ -161,7 +161,7 @@ class CountTree(object):
             warning = "WARNING: {} not in VCF header\n".format(chromosome)
             sys.stderr.write(warning)
             chrom_iter = []
-        # ...create iterator for cheomosome
+        # ...create iterator for chromosome
         else:
             chrom_iter = count_file.fetch(reference=chromosome)
         # Set variables to process data
@@ -283,9 +283,9 @@ class CountTree(object):
             is not found.
         '''
         test_tuple = (start, end, ref, alt)
-        if test_tuple in self.test_variants:
+        try:
             test_str = self.test_variants[test_tuple]
-        else:
+        except KeyError:
             test_str = self.generate_test_string(
                 start=start, end=end, ref=ref, alt=alt
             )
@@ -384,10 +384,10 @@ class CountTree(object):
         # Generate region tuple
         region_tuple = (target_haplotype, tuple(starts), tuple(ends))
         # Extract region string if tuple has been observed previously...
-        if region_tuple in self.region_variants:
+        try:
             region_str = self.region_variants[region_tuple]
         # or generate and store region string if tuple is novel
-        else:
+        except KeyError:
             region_str = self.generate_region_string(
                 target_haplotype=target_haplotype, starts=starts, ends=ends
             )
@@ -426,9 +426,9 @@ class BamCounts(object):
     def get_read_string(self, chrom, starts, ends):
         # Generate region tuple
         region_tuple = (chrom, tuple(starts), tuple(ends))
-        if region_tuple in self.read_counts:
+        try:
             read_str = self.read_counts[region_tuple]
-        else:
+        except KeyError:
             read_str = self.generate_read_string(
                 chrom=chrom, starts=starts, ends=ends
             )
