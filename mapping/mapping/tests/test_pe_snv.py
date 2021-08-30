@@ -31,10 +31,19 @@ class TestSNV(TestGenerateVariantReads):
         self.assertEqual(
             fastq,
             {
-                ('R01', '0-10-20'): set([
-                    (('AAAAAAAAAA', 'ABCDEFGHIJ'), ('AAAAAAAAAA', 'HIJKLMNOPQ')),
+                ('R01', '0-0-10-3-13'): set([
+                    (
+                        ('AAAAAAAAAA', 'ABCDEFGHIJ'),
+                        ('AAAAAAAAAA', 'HIJKLMNOPQ')
+                    ),
+                    (
+                        ('AAAAATAAAA', 'ABCDEFGHIJ'),
+                        ('AATAAAAAAA', 'HIJKLMNOPQ')
+                    )
+                ])
             }
         )
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
