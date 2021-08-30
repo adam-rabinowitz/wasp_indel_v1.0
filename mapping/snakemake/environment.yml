@@ -1,0 +1,10 @@
+name: wasp
+channels:
+    - bioconda
+dependencies:
+    - bwa=0.7.15
+    - intervaltree=3.1.0
+    - picard=2.23.9
+    - pysam=0.15.3
+    - python=3.6.12
+    - snakemake=3.13.3
