@@ -412,14 +412,15 @@ class BamCounts(object):
         # Generate variable to store counts
         self.read_counts = {}
 
-    def generate_read_string(self, chrom, starts, ends):
+    def get_counts(self, chrom, starts, ends):
         counts = 0
         for start, end in zip(starts, ends):
             counts += self.bam_file.count(chrom, start, end)
-        count_list = [
-            str(counts),
-            str(self.total)
-        ]
+        return(counts)
+
+    def generate_read_string(self, chrom, starts, ends):
+        counts = self.get_counts(chrom, starts, ends)
+        count_list = [str(counts), str(self.total)]
         read_str = ' '.join(count_list)
         return(read_str)
 
