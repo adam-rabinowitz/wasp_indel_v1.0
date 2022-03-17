@@ -41,7 +41,7 @@ VariantTuple = collections.namedtuple(
     '_Variant', [
         'chrom', 'start', 'end', 'id', 'ref', 'alt', 'haplotype',
         'genotype', 'het_prob', 'ref_as_count', 'alt_as_count',
-        'other_as_count'
+        'other_as_count', 'hash'
     ]
 )
 
@@ -59,6 +59,7 @@ class IndividualVariant(VariantTuple):
         id, ref, alt = line_data[2:5]
         start = position - 1
         end = start + len(ref)
+        hash_value = hash((chrom, position, ref, alt))
         # Extract genotype information
         if 'NA' in line_data[5:9]:
             assert(line_data[5:9] == ['NA', 'NA', 'NA', 'NA'])
@@ -88,12 +89,12 @@ class IndividualVariant(VariantTuple):
                 )
             else:
                 raise ValueError('adjhetprob value not recognised')
-        # Generate hash
+        # Create and return variant
         new_variant = cls(
             chrom=chrom, start=start, end=end, id=id, ref=ref, alt=alt,
             haplotype=haplotype, genotype=genotype, het_prob=het_prob,
             ref_as_count=ref_as_count, alt_as_count=alt_as_count,
-            other_as_count=other_as_count
+            other_as_count=other_as_count, hash=hash_value
         )
         return(new_variant)
 
@@ -440,21 +441,18 @@ class BamCounts(object):
         self.bam_file.close()
 
 
-# x = CountTree(
-#     '/Users/rabinowi/wasp/test_data/alignments/paired_end.variant_counts.txt.gz',
-#     adjhetprob='total'
+# x1 = CountTree(
+#      '/Users/rabinowi/wasp/test_data/alignments/paired_end.variant_counts.txt.gz',
+#      adjhetprob=None
 # )
-# x.read_counts('chr4')
-# region_str = x.get_region_string('0|1', [0], [1000])
-# print(region_str)
-# region_str = x.get_region_string('0|1', [0], [1000])
-# print(region_str)
-# test_str = x.get_test_string(337, 400, 'T', 'A')
-# print(test_str)
-# test_str = x.get_test_string(337, 400, 'T', 'A')
-# print(test_str)
-# y = BamCounts(
-#     '/Users/rabinowi/wasp/test_data/alignments/paired_end.filtered.rmdup.bam'
+# x2 = CountTree(
+#      '/Users/rabinowi/wasp/test_data/alignments/paired_end.variant_counts.txt.gz',
+#      adjhetprob=None
 # )
-# bam_str = y.get_count_string('chr2L', (0,), (10000,))
-# print(bam_str)
+# x1.read_counts('chr4')
+# x2.read_counts('chr4')
+# v1 = x1.variants[0]
+# v2 = x2.variants[1]
+# v3 = x2.variants[0]
+# print(v1 == v2)
+# print(v1 == v3)
