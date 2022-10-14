@@ -12,7 +12,7 @@ SnakeMake
 ---------
 
 We now provide a Snakemake workflow that can be used to run the entire
-mappability filtering pipeline.
+mappability filtering pipeline along with a config file containing the parameters that should be supplied for the Snakemake workflow to function. Additionally, there is a environment yml file for instaling the required packages using conda.
 
 Step 1 & 2:
 -----------
@@ -43,6 +43,8 @@ original read sequence is written to a FASTQ file, with the suffix
 '.remap.fq.gz', along with all possible allele-flipped versions of the read(s).
 For paired-end alignments the read-pairs are interleaved in this FASTQ file.
 
+Please note the allele flipping can be done in a phase specific manner if samples within the VCF are specified using the "--samples" argument. If samples are specified the script checks to determine if the VCF contains phased data for relevant samples. This check for phased data can be ignored by adding the --assume phased flag.
+
 Step 4 & 5:
 -----------
 
@@ -59,6 +61,8 @@ the original sequence map to the same location as the orginal sequence. Reads
 with inconsistent mapped locations are discarded while the original read of
 consistently mapped alignments are written to a BAM file with the suffix
 '.consistent.bam'.
+
+The argument "--wobble" allows a spcified by distance between the originally mapped reads and the remapped flipped reads. The default is to allow zero wobble. 
 
 Step 7 & 8:
 -----------
@@ -79,4 +83,4 @@ Step 10:
 
 Generate variant metrics from the filtered and deduplicated BAM file using the
 script 'get_counts.py'. The count metrics file is bgzip compressed and tabix
-indexed
+indexed. This tabix file is a key input for generating data for the CHT test.
