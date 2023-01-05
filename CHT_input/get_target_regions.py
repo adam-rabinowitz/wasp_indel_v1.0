@@ -407,7 +407,7 @@ if __name__ == "__main__":
             min_total_reads=args.min_total_reads,
             window=args.window, outpath=args.outfile
         )
-    # or get test variants within regions if regions set else...
+    # or get test variants within regions
     elif args.regions:
         variant_filter.filter_regions(
             min_het=args.min_het, min_minor=args.min_minor,

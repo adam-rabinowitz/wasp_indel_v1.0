@@ -314,7 +314,6 @@ if __name__ == "__main__":
     counts, fit_table = load_data(
         inlist=args.infiles, fasta_path=args.fasta, min_counts=args.min_counts
     )
-
     # Read fit from file or generate new fit
     print("Generating coefficients")
     if args.fit_infile:
